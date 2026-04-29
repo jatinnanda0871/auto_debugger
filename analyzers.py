@@ -3,8 +3,8 @@ from api import DumpAnalyzer
 # Keys for the 3 pending bitmap regions — update to match your IP::key names
 PENDING_KEYS = [
     "TagManager::fetch_pending",
-    "TagManager::write_pending",
-    "TagManager::commit_pending",
+    # "TagManager::write_pending",
+    # "TagManager::commit_pending",
 ]
 
 
