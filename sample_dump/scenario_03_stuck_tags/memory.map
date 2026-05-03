@@ -1,6 +1,0 @@
-TagManager::occupied_tags=0xA0001000,0x10
-TagManager::fetch_pending=0xA0001010,0x10
-TagManager::write_pending=0xA0001020,0x10
-TagManager::commit_pending=0xA0001030,0x10
-FccManager::counters=0xA0002000,0x10
-FccManager::fcc_counter_size=8,0x4
