@@ -1,0 +1,2 @@
+TagManager::occupied_tags=0x50000,0x8
+TagManager::fetch_pending=0x50040,0x8

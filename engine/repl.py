@@ -1,34 +1,30 @@
 import re
 import readline
-from api import DumpAnalyzer
+from engine.api import DumpAnalyzer
 
 # ── Prompt ─────────────────────────────────────────────────────────────────────
 PROMPT = "(dbg) "
 
 # ── Patterns ───────────────────────────────────────────────────────────────────
 RE_KEY        = re.compile(r'^(\w+::\w+)$')
-RE_KEY_FIELD  = re.compile(r'^(\w+::\w+)\.(\w+)$')
 RE_RAW_FMT    = re.compile(r'^x/(\d+)x[wW]\s+(0x[0-9a-fA-F]+)$')
 RE_RAW_SIMPLE = re.compile(r'^x\s+(0x[0-9a-fA-F]+)$')
 
 
 class DebugREPL:
 
-    def __init__(self, analyzer: DumpAnalyzer, structs: dict, analyzers: dict):
+    def __init__(self, analyzer: DumpAnalyzer, analyzer_map: dict):
         """
-        analyzer  — DumpAnalyzer instance
-        structs   — { "TagManager::sfr_base": TagManagerSfr, ... }
-                    ctypes struct classes keyed by region name
-        analyzers — { "analyze_occupied_tags": fn, ... }
+        analyzer     — DumpAnalyzer instance
+        analyzer_map — { fn_name: fn } built from registry._analyzer_map()
         """
-        self._a       = analyzer
-        self._structs = structs
-        self._fns     = analyzers
+        self._a   = analyzer
+        self._fns = analyzer_map
         self._setup_completion()
 
     def _setup_completion(self):
-        """Tab-completes region keys."""
-        keys = list(self._a.regions.keys())
+        """Tab-completes region keys and analyzer names."""
+        keys = list(self._a._regions.keys()) + list(self._fns.keys())
         def completer(text, state):
             matches = [k for k in keys if k.startswith(text)]
             return matches[state] if state < len(matches) else None
@@ -55,12 +51,6 @@ class DebugREPL:
 
     def _dispatch(self, raw: str):
         try:
-            # TagManager::occupied_tags.field_name
-            m = RE_KEY_FIELD.match(raw)
-            if m:
-                self._print_field(m.group(1), m.group(2))
-                return
-
             # TagManager::occupied_tags
             m = RE_KEY.match(raw)
             if m:
@@ -105,51 +95,10 @@ class DebugREPL:
 
           0xA0001000:  0x00000020  0x00000001  0x00000000  0x00000000
         """
-        region = self._a.get_region(key)
+        region = self._a._get_region(key)
         dwords = self._a.get_region_dwords(key)
         print(f"\n{key}  0x{region.base_addr:08X}  {region.size_bytes} B\n")
         self._print_dwords_gdb(region.base_addr, dwords)
-        if key in self._structs:
-            self._print_struct_fields(key)
-
-    # ── Print field ────────────────────────────────────────────────────────────
-
-    def _print_field(self, key: str, field: str):
-        """
-        Reflects into ctypes struct for this key and prints the field.
-
-        (dbg) TagManager::sfr_base.tag_count
-        TagManager::sfr_base.tag_count  0xA0001008  =  5  (uint16)
-        """
-        struct_type = self._structs.get(key)
-        if struct_type is None:
-            print(f"  error: no struct registered for '{key}'")
-            print(f"  hint:  use plain '{key}' for raw hex dump")
-            return
-
-        region = self._a.get_region(key)
-        obj    = self._a.read_struct(region, struct_type)
-
-        if not hasattr(obj, field):
-            available = [f[0] for f in struct_type._fields_]
-            print(f"  error: '{field}' not in {struct_type.__name__}")
-            print(f"  fields: {available}")
-            return
-
-        import ctypes
-        val          = getattr(obj, field)
-        field_offset = getattr(struct_type, field).offset
-        field_addr   = region.base_addr + field_offset
-        ctype_name   = type(val).__name__.replace("c_", "")
-
-        if isinstance(val, int):
-            print(f"\n{key}.{field}  0x{field_addr:08X}  =  "
-                  f"0x{val:X}  ({val})  [{ctype_name}]\n")
-        elif hasattr(val, '__len__'):
-            print(f"\n{key}.{field}  0x{field_addr:08X}  [{ctype_name} * {len(val)}]\n")
-            self._print_dwords_gdb(field_addr, list(val))
-        else:
-            print(f"\n{key}.{field}  0x{field_addr:08X}  =  {val}  [{ctype_name}]\n")
 
     # ── Print raw address ──────────────────────────────────────────────────────
 
@@ -164,7 +113,7 @@ class DebugREPL:
         """
         dwords = []
         for i in range(count):
-            dw = self._a.mem.read_dword(addr + i * 4)
+            dw = self._a._mem.read_dword(addr + i * 4)
             dwords.append(dw if dw is not None else 0xDEADDEAD)
 
         hint = self._resolve_symbol(addr)
@@ -173,30 +122,6 @@ class DebugREPL:
 
         print()
         self._print_dwords_gdb(addr, dwords)
-
-    # ── Struct fields overview ─────────────────────────────────────────────────
-
-    def _print_struct_fields(self, key: str):
-        """Prints all fields of a registered struct — like GDB's 'p *ptr'."""
-        struct_type = self._structs[key]
-        region      = self._a.get_region(key)
-        try:
-            obj = self._a.read_struct(region, struct_type)
-        except Exception as e:
-            print(f"  [struct read error: {e}]")
-            return
-        print(f"  # {struct_type.__name__} fields:")
-        for fname, *_ in struct_type._fields_:
-            val          = getattr(obj, fname)
-            field_offset = getattr(struct_type, fname).offset
-            field_addr   = region.base_addr + field_offset
-            if isinstance(val, int):
-                print(f"    .{fname:<20}  0x{field_addr:08X}  =  "
-                      f"0x{val:08X}  ({val})")
-            elif hasattr(val, '__len__'):
-                print(f"    .{fname:<20}  0x{field_addr:08X}  "
-                      f"[array len={len(val)}]")
-        print()
 
     # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -211,27 +136,26 @@ class DebugREPL:
 
     def _resolve_symbol(self, addr: int) -> str:
         """Reverse lookup — which key contains this address."""
-        for key, region in self._a.regions.items():
+        for key, region in self._a._regions.items():
             if region.base_addr <= addr < region.end_addr:
                 return f"{key}+0x{addr - region.base_addr:X}"
         return ""
 
     def _list(self):
         print()
-        for key, r in sorted(self._a.regions.items()):
-            covered    = "✓" if self._a.is_region_in_dump(key) else "✗"
-            has_struct = "  [struct]" if key in self._structs else ""
-            print(f"  {covered}  {key:<45}  0x{r.base_addr:08X}  "
-                  f"{r.size_bytes} B{has_struct}")
+        for key, r in sorted(self._a._regions.items()):
+            covered = "✓" if self._a.is_region_in_dump(key) else "✗"
+            print(f"  {covered}  {key:<45}  0x{r.base_addr:08X}  {r.size_bytes} B")
         print()
 
     def _run(self, args):
         if not args:
-            print(f"  available: {list(self._fns.keys())}")
+            print(f"  available analyzers: {list(self._fns.keys())}")
             return
         fn = self._fns.get(args[0])
         if fn is None:
             print(f"  error: '{args[0]}' not found")
+            print(f"  available: {list(self._fns.keys())}")
             return
         fn(self._a)
 
@@ -239,8 +163,6 @@ class DebugREPL:
         print("""
   Probe by key:
     TagManager::occupied_tags            hex dump of full region
-    TagManager::sfr_base.tag_count       read struct field
-    TagManager::sfr_base.occupied_tags   read array field
 
   Probe by address:
     x/4xw  0xA0001000      read 4 dwords at address
@@ -249,7 +171,7 @@ class DebugREPL:
 
   Session:
     list                   list all known regions
-    run <analyzer_name>    run a named analyzer
+    run <analyzer_name>    run a named analyzer (tab-complete supported)
     help                   this message
     quit                   exit
         """)

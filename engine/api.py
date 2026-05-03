@@ -1,6 +1,5 @@
-import ctypes
 from typing import Optional
-from models import MemoryView, Region
+from engine.models import MemoryView, Region
 
 
 class DumpAnalyzer:
@@ -13,31 +12,14 @@ class DumpAnalyzer:
         self._mem     = mem
         self._regions = regions
 
-    # ── Public accessors ───────────────────────────────────────────────────────
+    # ── Internal helpers ───────────────────────────────────────────────────────
 
-    @property
-    def mem(self) -> MemoryView:
-        """Underlying sparse memory view. Read-only by convention."""
-        return self._mem
-
-    @property
-    def regions(self) -> dict[str, Region]:
-        """All known regions, keyed by IP::key. Read-only by convention."""
-        return self._regions
-
-    def get_region(self, key: str) -> Region:
-        """Looks up a region by key. Raises KeyError if not found."""
+    def _get_region(self, key: str) -> Region:
         region = self._regions.get(key)
         if region is None:
             raise KeyError(f"Key '{key}' not found in map. "
                            f"Available: {list(self._regions.keys())}")
         return region
-
-    # ── Internal helpers ───────────────────────────────────────────────────────
-
-    def _get_region(self, key: str) -> Region:
-        # Kept for internal call sites; delegates to the public accessor.
-        return self.get_region(key)
 
     def _get_dword(self, key: str) -> int:
         region = self._get_region(key)
@@ -243,20 +225,3 @@ class DumpAnalyzer:
 
     def get_missing_regions(self, *keys: str) -> list[str]:
         return [k for k in keys if not self.is_region_in_dump(k)]
-
-    # ── Struct access ──────────────────────────────────────────────────────────
-
-    def read_struct(self, region: Region, struct_type: type) -> object:
-        """
-        Reads region bytes and overlays struct_type on them.
-        Equivalent to reinterpret_cast<struct_type*>(base_addr).
-        """
-        size  = ctypes.sizeof(struct_type)
-        chunk = self._mem._find_chunk(region.base_addr)
-        if chunk is None:
-            raise ValueError(f"Region '{region.name}' at 0x{region.base_addr:08X} not in dump")
-        offset = region.base_addr - chunk.base_addr
-        if offset + size > len(chunk.data):
-            raise ValueError(f"Region '{region.name}' too small for struct of size {size}")
-        raw = bytes(chunk.data[offset:offset + size])
-        return struct_type.from_buffer_copy(raw)
