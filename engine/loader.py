@@ -18,7 +18,7 @@ CHUNK_GAP_THRESHOLD = 0x1000  # 4 KB — new chunk if gap exceeds this
 # and returned directly by get_value(key, is_address=False).
 
 MAP_LINE_RE = re.compile(
-    r'^(\w+::\w+)\s*=\s*(0x[0-9a-fA-F]+|[0-9]+)\s*,\s*(0x[0-9a-fA-F]+)$'
+    r'^(\w+::\w+)\s*=\s*(0x[0-9a-fA-F]+)\s*,\s*(0x[0-9a-fA-F]+)$'
 )
 
 def load_map(map_file: str) -> dict[str, Region]:
@@ -33,7 +33,7 @@ def load_map(map_file: str) -> dict[str, Region]:
                 print(f"[WARN] Map line {lineno}: unexpected format — '{line}'")
                 continue
             name, addr_str, size_str = m.group(1), m.group(2), m.group(3)
-            base_addr   = int(addr_str, 16) if addr_str.startswith("0x") else int(addr_str)
+            base_addr   = int(addr_str, 16)
             size_dwords = int(size_str, 16) // 4
             regions[name] = Region(
                 name=name,
