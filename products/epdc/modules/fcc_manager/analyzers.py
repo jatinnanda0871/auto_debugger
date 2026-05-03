@@ -5,13 +5,14 @@ from products.epdc.config import TAG_OCCUPIED_KEY, FCC_COUNTERS_KEY, FCC_COUNTER
 def analyze_fcc_counter(analyzer: DumpAnalyzer) -> None:
     print("\n=== FCC Counter Analysis ===")
 
-    missing = analyzer.get_missing_regions(
-        FCC_COUNTER_SIZE_KEY,
-        FCC_COUNTERS_KEY,
-        TAG_OCCUPIED_KEY,
-    )
+    # FCC_COUNTER_SIZE_KEY is a literal value in the map (no 0x prefix on address),
+    # so only the dump-backed regions need coverage checks.
+    missing = analyzer.get_missing_regions(FCC_COUNTERS_KEY, TAG_OCCUPIED_KEY)
     if missing:
         print(f"  [SKIP] Missing regions: {missing}")
+        return
+    if not analyzer.key_exists(FCC_COUNTER_SIZE_KEY):
+        print(f"  [SKIP] '{FCC_COUNTER_SIZE_KEY}' not in map")
         return
 
     fcc_counter_size = analyzer.get_value(FCC_COUNTER_SIZE_KEY, is_address=False)
