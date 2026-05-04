@@ -90,10 +90,8 @@ key_exists(key)                         # check if key is in map
 
 ### Bit / tag operations
 ```python
-is_zero(key)                            # dword == 0
 is_bit_set(key, bit)                    # single bit check
 get_set_bits(key)                       # all set bit positions
-get_set_tags(key)                       # alias for get_set_bits
 count_set_tags(key)                     # count only, no list
 is_tag_set_in_region(key, tag_index)    # check specific tag in bitmap
 ```
@@ -131,19 +129,6 @@ assert_zero(label, key)
 assert_no_tags_set(label, key)
 ```
 
-### Dump coverage
-```python
-is_region_in_dump(key)
-get_missing_regions(*keys)
-```
-
-### Struct access
-```python
-read_struct(region, struct_type)        # ctypes overlay — reinterpret_cast equivalent
-```
-
----
-
 ## Adding a New Analyzer
 
 1. Write the function in `analyzers.py` — takes `DumpAnalyzer` as sole argument
@@ -152,10 +137,6 @@ read_struct(region, struct_type)        # ctypes overlay — reinterpret_cast eq
 ```python
 def analyze_my_region(analyzer: DumpAnalyzer) -> None:
     print("\n=== My Region ===")
-    missing = analyzer.get_missing_regions("my_key")
-    if missing:
-        print(f"  [SKIP] {missing}")
-        return
     val = analyzer.get_value("my_key")
     print(f"  value = 0x{val:08X}")
 ```
