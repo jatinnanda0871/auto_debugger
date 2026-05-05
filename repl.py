@@ -12,7 +12,7 @@ RE_RAW_SIMPLE = re.compile(r'^x\s+(0x[0-9a-fA-F]+)$')
 
 class DebugREPL:
 
-    def __init__(self, analyzer: DumpAnalyzer, structs: dict, analyzers: dict):
+    def __init__(self, analyzer: DumpAnalyzer):
         """
         analyzer  — DumpAnalyzer instance
         structs   — { "TagManager::sfr_base": TagManagerSfr, ... }
@@ -20,8 +20,6 @@ class DebugREPL:
         analyzers — { "analyze_occupied_tags": fn, ... }
         """
         self._a       = analyzer
-        self._structs = structs
-        self._fns     = analyzers
         self._setup_completion()
 
     def _setup_completion(self):
@@ -69,7 +67,6 @@ class DebugREPL:
             cmd, args = parts[0].lower(), parts[1:]
             if   cmd == "help": self._help()
             elif cmd == "list": self._list()
-            elif cmd == "run":  self._run(args)
             else:
                 print(f"  Unknown: '{raw}'  —  type 'help'")
 
@@ -125,20 +122,9 @@ class DebugREPL:
         print()
         for key, r in sorted(self._a.regions.items()):
             covered    = "✓" if self._a.is_region_in_dump(key) else "✗"
-            has_struct = "  [struct]" if key in self._structs else ""
             print(f"  {covered}  {key:<45}  0x{r.base_addr:08X}  "
-                  f"{r.size_bytes} B{has_struct}")
+                  f"{r.size_bytes}")
         print()
-
-    def _run(self, args):
-        if not args:
-            print(f"  available: {list(self._fns.keys())}")
-            return
-        fn = self._fns.get(args[0])
-        if fn is None:
-            print(f"  error: '{args[0]}' not found")
-            return
-        fn(self._a)
 
     def _help(self):
         print("""

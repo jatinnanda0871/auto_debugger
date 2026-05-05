@@ -1,12 +1,7 @@
-import sys
 import re
 import glob
 import os
-from typing import Optional
 from models import Region, Chunk, MemoryView
-from api import DumpAnalyzer
-from analyzers import *
-from repl import DebugREPL
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -16,8 +11,8 @@ CHUNK_GAP_THRESHOLD = 0x1000  # 4 KB — new chunk if gap exceeds this
 
 # ── Map loader ─────────────────────────────────────────────────────────────────
 #
-# Format: IP::key=0xADDR,0xSIZE
-# Example: TagManager::occupied_tags=0xA0001234,0x000000C0
+# Format: IP::key=0xADDR,0xSIZE   (all values must be 0x-prefixed hex)
+# Example: TagManager::occupied_tags=0xA0001000,0x10
 
 MAP_LINE_RE = re.compile(
     r'^(\w+::\w+)\s*=\s*(0x[0-9a-fA-F]+)\s*,\s*(0x[0-9a-fA-F]+)$'
@@ -39,7 +34,7 @@ def load_map(map_file: str) -> dict[str, Region]:
             regions[name] = Region(
                 name=name,
                 base_addr=int(addr_str, 16),
-                size_dwords=size_dwords
+                size_dwords=size_dwords,
             )
     return regions
 
@@ -99,18 +94,24 @@ def _build_chunks(parsed_lines: list[tuple[int, list[int]]]) -> list[Chunk]:
     chunks.append(_lines_to_chunk(chunk_start, chunk_lines))
     return chunks
 
-def load_dump(dump_path: str) -> MemoryView:
-    """
-    Accepts a folder (loads all *.dump files) or a single file.
-    All files merged into one sparse MemoryView.
-    """
-    if os.path.isdir(dump_path):
-        dump_files = sorted(glob.glob(os.path.join(dump_path, "*.dump")))
-        if not dump_files:
-            raise ValueError(f"No *.dump files found in '{dump_path}'")
-        print(f"[INFO] Found {len(dump_files)} dump file(s) in '{dump_path}'")
-    else:
-        dump_files = [dump_path]
+def find_map_file(dump_folder: str) -> str:
+    """Finds exactly one *.map file in dump_folder. Raises clearly if not found."""
+    map_files = glob.glob(os.path.join(dump_folder, "*.map"))
+    if not map_files:
+        raise ValueError(f"No *.map file found in '{dump_folder}'")
+    if len(map_files) > 1:
+        raise ValueError(
+            f"Multiple *.map files in '{dump_folder}': {map_files}\n"
+            f"Keep exactly one .map file per dump folder."
+        )
+    return map_files[0]
+
+def load_dump(dump_folder: str) -> MemoryView:
+    """Loads all *.dump files from dump_folder into one sparse MemoryView."""
+    dump_files = sorted(glob.glob(os.path.join(dump_folder, "*.dump")))
+    if not dump_files:
+        raise ValueError(f"No *.dump files found in '{dump_folder}'")
+    print(f"[INFO] Found {len(dump_files)} dump file(s) in '{dump_folder}'")
 
     all_parsed = []
     for f in dump_files:
@@ -122,7 +123,6 @@ def load_dump(dump_path: str) -> MemoryView:
     if not all_parsed:
         raise ValueError("No valid dump lines found")
 
-    # Deduplicate — last file wins on address collision
     seen = {}
     for addr, dwords in all_parsed:
         seen[addr] = dwords
@@ -132,45 +132,3 @@ def load_dump(dump_path: str) -> MemoryView:
     mv     = MemoryView(chunks=chunks)
     print(f"[INFO] Loaded dump —\n{mv.summary()}")
     return mv
-
-# ── Analyzer registry ──────────────────────────────────────────────────────────
-
-ANALYZERS = [
-    analyze_occupied_tags,
-    analyze_fcc_counter,
-    # add more here
-]
-
-# Map name → function for REPL 'run' command
-ANALYZER_MAP = { fn.__name__: fn for fn in ANALYZERS }
-
-# Map region key → ctypes struct class (add entries as structs are generated)
-# Example: from structs import TagManagerSfr
-# STRUCT_MAP = { "TagManager::sfr_base": TagManagerSfr }
-STRUCT_MAP = {}
-
-# ── Entry point ────────────────────────────────────────────────────────────────
-
-def main():
-    if len(sys.argv) < 3:
-        print(f"Usage: {sys.argv[0]} <dump_folder_or_file> <map_file> [--repl]")
-        sys.exit(1)
-
-    dump_path, map_file = sys.argv[1], sys.argv[2]
-    interactive = "--repl" in sys.argv
-
-    regions  = load_map(map_file)
-    mem      = load_dump(dump_path)
-    analyzer = DumpAnalyzer(mem, regions)
-
-    if interactive:
-        DebugREPL(analyzer, STRUCT_MAP, ANALYZER_MAP).run()
-    else:
-        for fn in ANALYZERS:
-            try:
-                fn(analyzer)
-            except Exception as e:
-                print(f"\n[ERROR] {fn.__name__} failed: {e}")
-
-if __name__ == "__main__":
-    main()
