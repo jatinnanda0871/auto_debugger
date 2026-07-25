@@ -1,12 +1,5 @@
-from api import DumpAnalyzer
-
-# Keys for the 3 pending bitmap regions — update to match your IP::key names
-PENDING_KEYS = [
-    "TagManager::fetch_pending",
-    "TagManager::write_pending",
-    "TagManager::commit_pending",
-]
-
+from engine.api import DumpAnalyzer
+import config
 
 def analyze_occupied_tags(analyzer: DumpAnalyzer) -> None:
     print("\n=== Occupied Tags ===")
@@ -41,8 +34,7 @@ def analyze_occupied_tags(analyzer: DumpAnalyzer) -> None:
 def analyze_fcc_counter(analyzer: DumpAnalyzer) -> None:
     print("\n=== FCC Counter Analysis ===")
 
-    fcc_counter_size = analyzer.get_value("FccManager::fcc_counter_size",
-                                           is_address=False)
+    fcc_counter_size = FCC_COUNTER_SIZE
     fcc_mask         = (1 << fcc_counter_size) - 1
     print(f"  fcc_count_field_size : {fcc_counter_size} bits  (mask=0x{fcc_mask:08X})")
 

@@ -65,7 +65,7 @@ class MemoryView:
         b = c.data[offset:offset + 4]
         return b[0] | (b[1] << 8) | (b[2] << 16) | (b[3] << 24)
 
-    def read_region_dwords(self, region: Region) -> list[Optional[int]]:
+    def read_region_dwords(self, region: Region) -> list:
         return [self.read_dword(region.base_addr + i * 4)
                 for i in range(region.size_dwords)]
 

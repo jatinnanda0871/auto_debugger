@@ -1,6 +1,6 @@
 import importlib.util
 from pathlib import Path
-from api import DumpAnalyzer
+from engine.api import DumpAnalyzer
 from products.epdc.config import MODULES
 
 

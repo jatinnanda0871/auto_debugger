@@ -1,6 +1,7 @@
 import ctypes
+import sys
 from typing import Optional
-from models import MemoryView, Region
+from engine.models import MemoryView, Region
 
 
 class DumpAnalyzer:
@@ -10,8 +11,9 @@ class DumpAnalyzer:
     """
 
     def __init__(self, mem: MemoryView, regions: dict[str, Region]):
-        self._mem     = mem
-        self._regions = regions
+        self._mem         = mem
+        self._regions     = regions
+        self._error_found = False
 
     # ── Public accessors ───────────────────────────────────────────────────────
 
@@ -21,7 +23,7 @@ class DumpAnalyzer:
         return self._mem
 
     @property
-    def regions(self) -> dict[str, Region]:
+    def regions(self) -> dict:
         """All known regions, keyed by IP::key. Read-only by convention."""
         return self._regions
 
@@ -48,7 +50,7 @@ class DumpAnalyzer:
 
     # ── Core access ────────────────────────────────────────────────────────────
 
-    def get_value(self, key: str, is_address: bool = True) -> int:
+    def get_dword(self, key: str, is_address: bool = True) -> int:
         """
         If is_address=True  → reads dword from dump at region base address.
         If is_address=False → returns the base_addr field directly as literal.
@@ -61,7 +63,7 @@ class DumpAnalyzer:
             raise ValueError(f"Key '{key}' at 0x{region.base_addr:08X} not in dump")
         return dword
 
-    def get_region_dwords(self, key: str) -> list[int]:
+    def get_region_dwords(self, key: str) -> list:
         region = self._get_region(key)
         result = []
         for dw in self._mem.read_region_dwords(region):
@@ -93,7 +95,7 @@ class DumpAnalyzer:
     def is_bit_set(self, key: str, bit: int) -> bool:
         return bool(self._get_dword(key) & (1 << bit))
 
-    def get_set_bits(self, key: str) -> list[int]:
+    def get_set_bits(self, key: str) -> list:
         dwords   = self.get_region_dwords(key)
         set_bits = []
         for dw_idx, dw in enumerate(dwords):
@@ -163,30 +165,12 @@ class DumpAnalyzer:
 
     # ── Cross-region correlation ───────────────────────────────────────────────
 
-    def get_tags_in_all(self, *keys: str) -> list[int]:
-        """Returns tags set in ALL given bitmap regions simultaneously."""
-        if not keys:
-            return []
-        sets = [set(self.get_set_bits(k)) for k in keys]
-        result = sets[0]
-        for s in sets[1:]:
-            result = result & s
-        return sorted(result)
-
-    def get_tags_in_any(self, *keys: str) -> list[int]:
+    def get_tags_in_any(self, *keys: str) -> list:
         """Returns tags set in at least one of the given regions."""
         result = set()
         for k in keys:
             result |= set(self.get_set_bits(k))
         return sorted(result)
-
-    def get_tags_only_in(self, source_key: str, *exclude_keys: str) -> list[int]:
-        """Returns tags in source_key but NOT in any of the exclude_keys."""
-        source  = set(self.get_set_bits(source_key))
-        exclude = set()
-        for k in exclude_keys:
-            exclude |= set(self.get_set_bits(k))
-        return sorted(source - exclude)
 
     def compare_tag_counts(self, key_a: str, key_b: str) -> dict:
         """Compares set-bit counts between two regions."""
@@ -201,13 +185,28 @@ class DumpAnalyzer:
 
     # ── Validation ─────────────────────────────────────────────────────────────
 
-    def assert_equal(self, label: str, actual: int, expected: int) -> bool:
-        if actual == expected:
-            print(f"  [PASS] {label}: {actual} == {expected}")
-            return True
-        else:
+    def assert_equal(self, label: str, actual: int, expected: int) -> None:
+        if actual != expected:
             print(f"  [FAIL] {label}: {actual} != {expected}  (delta: {abs(actual - expected)})")
-            return False
+            self._error_found = True
+
+    def assert_true(self, label: str, value: int) -> None:
+        if value == 0:
+            print(f"  [FAIL] {label}: {value} is Zero or False, expected was non-zero or True")
+            self._error_found = True
+
+    def assert_false(self, label: str, value: int) -> None:
+        if value != 0:
+            print(f"  [FAIL] {label}: {value} is non-zero, expected was 0")
+            self._error_found = True
+
+    def exit_analyser(self) -> None:
+        if self._error_found == True:
+            print(f"\n  [FAIL] Encountered error during analysis")
+        else:
+            print(f"\n  [PASS] No issues found during dump analysis")
+
+        sys.exit(self._error_found)
 
     # ── Dump coverage ──────────────────────────────────────────────────────────
 
@@ -217,5 +216,5 @@ class DumpAnalyzer:
             return False
         return self._mem.read_dword(region.base_addr) is not None
 
-    def get_missing_regions(self, *keys: str) -> list[str]:
+    def get_missing_regions(self, *keys: str) -> list:
         return [k for k in keys if not self.is_region_in_dump(k)]

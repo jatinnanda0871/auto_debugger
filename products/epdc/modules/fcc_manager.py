@@ -1,23 +1,12 @@
-from api import DumpAnalyzer
-from products.epdc.config import PENDING_TAG_ADDR, FCC_COUNTERS_ADDR, FCC_COUNTER_SIZE
+from engine.api import DumpAnalyzer
+from products.epdc.config import *
 
 
 # ── Analyzers ──────────────────────────────────────────────────────────────────
 
 def analyze_fcc_counter(analyzer: DumpAnalyzer) -> None:
     print("\n=== FCC Counter Analysis ===")
-
-    # FCC_COUNTER_SIZE is a literal value in the map (not a dump address),
-    # so check only dump-backed regions for coverage.
-    missing = analyzer.get_missing_regions(FCC_COUNTERS_ADDR, PENDING_TAG_ADDR)
-    if missing:
-        print(f"  [SKIP] Missing regions: {missing}")
-        return
-    if not analyzer.key_exists(FCC_COUNTER_SIZE):
-        print(f"  [SKIP] '{FCC_COUNTER_SIZE}' not in map")
-        return
-
-    fcc_counter_size = analyzer.get_value(FCC_COUNTER_SIZE, is_address=False)
+    fcc_counter_size = FCC_COUNTER_SIZE
     fcc_mask         = (1 << fcc_counter_size) - 1
     print(f"  fcc_count_field_size : {fcc_counter_size} bits  (mask=0x{fcc_mask:08X})")
 

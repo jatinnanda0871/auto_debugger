@@ -24,7 +24,13 @@ PENDING_TAG_SUBSET_ADDR = [
     "TagManager::commit_pending",
 ]
 
+PENDING_KEYS = [
+    "TagManager::fetch_pending",
+    "TagManager::write_pending",
+    "TagManager::commit_pending",
+]
+
 # ── FccManager keys ────────────────────────────────────────────────────────────
 
 FCC_COUNTERS_ADDR     = "FccManager::counters"
-FCC_COUNTER_SIZE = "FccManager::fcc_counter_size"
+FCC_COUNTER_SIZE = 8

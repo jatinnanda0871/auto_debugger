@@ -19,7 +19,7 @@ import importlib.util
 from pathlib import Path
 
 from engine.loader import find_map_file, load_map, load_dump
-from api import DumpAnalyzer
+from engine.api import DumpAnalyzer
 
 
 def _load_product(product_id: str):
@@ -27,12 +27,14 @@ def _load_product(product_id: str):
     Resolves product_id → products/<product_id>/product.py and imports it.
     The module must define: run(analyzer: DumpAnalyzer) -> None
     """
-    product_path = Path("products") / product_id / "product.py"
+    script_dir = Path(__file__).parent
+    product_path = script_dir / "products" / product_id / "product.py"
     if not product_path.exists():
+        products_dir = script_dir / "products"
         available = sorted(
-            p.name for p in Path("products").iterdir()
+            p.name for p in products_dir.iterdir()
             if p.is_dir() and (p / "product.py").exists()
-        ) if Path("products").exists() else []
+        ) if products_dir.exists() else []
         raise FileNotFoundError(
             f"Product '{product_id}' not found.\n"
             f"Expected: {product_path}\n"
@@ -75,9 +77,11 @@ def main():
 
     # ── Optional REPL — always after analysis ─────────────────────────────────
     if interactive:
-        from repl import DebugREPL
+        from engine.repl import DebugREPL
         DebugREPL(analyzer).run()
-
+    
+    # end analysis with result
+    analyzer.exit_analyser()
 
 if __name__ == "__main__":
     main()
