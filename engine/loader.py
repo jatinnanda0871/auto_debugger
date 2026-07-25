@@ -1,7 +1,8 @@
 import re
 import glob
+import io
 import os
-from models import Region, Chunk, MemoryView
+from engine.models import Region, Chunk, MemoryView
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -11,16 +12,16 @@ CHUNK_GAP_THRESHOLD = 0x1000  # 4 KB — new chunk if gap exceeds this
 
 # ── Map loader ─────────────────────────────────────────────────────────────────
 #
-# Format: IP::key=0xADDR,0xSIZE   (all values must be 0x-prefixed hex)
-# Example: TagManager::occupied_tags=0xA0001000,0x10
+# Format: IP::key=0xADDR,0xSIZE
+# Example: TagManager::occupied_tags=0xA0001000,0x000000C0
 
 MAP_LINE_RE = re.compile(
-    r'^(\w+::\w+)\s*=\s*(0x[0-9a-fA-F]+)\s*,\s*(0x[0-9a-fA-F]+)$'
+    r'^(\w+::\w+)\s*=\s*((?:0x)?[0-9a-fA-F]+)\s*,\s*(0x[0-9a-fA-F]+)$'
 )
 
-def load_map(map_file: str) -> dict[str, Region]:
+def load_map(map_file: str) -> dict:
     regions = {}
-    with open(map_file) as f:
+    with io.open(os.open(map_file, os.O_RDONLY), 'r') as f:
         for lineno, line in enumerate(f, 1):
             line = line.strip()
             if not line:
@@ -31,9 +32,10 @@ def load_map(map_file: str) -> dict[str, Region]:
                 continue
             name, addr_str, size_str = m.group(1), m.group(2), m.group(3)
             size_dwords = int(size_str, 16) // 4
+            base_addr   = int(addr_str, 16) if addr_str.startswith("0x") or addr_str.startswith("0X") else int(addr_str)
             regions[name] = Region(
                 name=name,
-                base_addr=int(addr_str, 16),
+                base_addr=base_addr,
                 size_dwords=size_dwords,
             )
     return regions
@@ -47,9 +49,9 @@ DUMP_LINE_RE = re.compile(
     r'((?:0x[0-9a-fA-F]+\s*){8})$'
 )
 
-def _parse_dump_lines(dump_file: str) -> list[tuple[int, list[int]]]:
+def _parse_dump_lines(dump_file: str) -> list:
     parsed = []
-    with open(dump_file) as f:
+    with io.open(os.open(dump_file, os.O_RDONLY), 'r') as f:
         for lineno, raw in enumerate(f, 1):
             raw = raw.strip()
             if not raw:
@@ -63,7 +65,7 @@ def _parse_dump_lines(dump_file: str) -> list[tuple[int, list[int]]]:
             parsed.append((addr, dwords))
     return parsed
 
-def _lines_to_chunk(base_addr: int, lines: list[tuple[int, list[int]]]) -> Chunk:
+def _lines_to_chunk(base_addr: int, lines: list) -> Chunk:
     last_addr  = lines[-1][0]
     total_size = (last_addr - base_addr) + LINE_BYTES
     buf        = bytearray(total_size)
@@ -76,7 +78,7 @@ def _lines_to_chunk(base_addr: int, lines: list[tuple[int, list[int]]]) -> Chunk
             buf[offset + 3] = (dw >> 24) & 0xFF
     return Chunk(base_addr=base_addr, data=buf)
 
-def _build_chunks(parsed_lines: list[tuple[int, list[int]]]) -> list[Chunk]:
+def _build_chunks(parsed_lines: list) -> list:
     if not parsed_lines:
         return []
     parsed_lines.sort(key=lambda x: x[0])

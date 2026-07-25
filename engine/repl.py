@@ -1,6 +1,6 @@
 import re
 import readline
-from api import DumpAnalyzer
+from engine.api import DumpAnalyzer
 
 # ── Prompt ─────────────────────────────────────────────────────────────────────
 PROMPT = "(dbg) "
@@ -12,7 +12,7 @@ RE_RAW_SIMPLE = re.compile(r'^x\s+(0x[0-9a-fA-F]+)$')
 
 class DebugREPL:
 
-    def __init__(self, analyzer: DumpAnalyzer):
+    def __init__(self, analyzer: DumpAnalyzer, structs: dict, analyzers: dict):
         """
         analyzer  — DumpAnalyzer instance
         structs   — { "TagManager::sfr_base": TagManagerSfr, ... }
@@ -20,11 +20,13 @@ class DebugREPL:
         analyzers — { "analyze_occupied_tags": fn, ... }
         """
         self._a       = analyzer
+        self._structs = structs
+        self._fns     = analyzers
         self._setup_completion()
 
     def _setup_completion(self):
         """Tab-completes region keys."""
-        keys = list(self._a.regions.keys())
+        keys = list(self._a._regions.keys())
         def completer(text, state):
             matches = [k for k in keys if k.startswith(text)]
             return matches[state] if state < len(matches) else None
