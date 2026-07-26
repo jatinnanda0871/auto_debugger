@@ -8,11 +8,11 @@ from typing import Optional
 class Region:
     name: str
     base_addr: int
-    size_dwords: int
+    size_bytes: int  # exact byte count from map file
 
     @property
-    def size_bytes(self) -> int:
-        return self.size_dwords * 4
+    def size_dwords(self) -> int:
+        return (self.size_bytes + 3) // 4
 
     @property
     def end_addr(self) -> int:
