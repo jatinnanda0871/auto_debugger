@@ -1,0 +1,9 @@
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-ra --strict-markers"
+
+[tool.coverage.run]
+source = ["engine", "products"]
+omit = ["products/test_suite/gen_fixtures.py"]

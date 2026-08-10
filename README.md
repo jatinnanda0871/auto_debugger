@@ -18,12 +18,17 @@ auto_debugger/
 │   ├── api.py                   ← DumpAnalyzer public API
 │   ├── loader.py                ← map / dump file loaders (read-only enforced)
 │   └── repl.py                  ← interactive GDB-style debug REPL
-└── products/
-    └── <product_id>/
-        ├── config.py            ← map key constants + MODULES list
-        ├── product.py           ← product entry point: run(analyzer)
-        └── modules/
-            └── <module>.py      ← per-IP analyzer: run(analyzer)
+├── products/
+│   ├── <product_id>/
+│   │   ├── config.py            ← map key constants + MODULES list
+│   │   ├── product.py           ← product entry point: run(analyzer)
+│   │   └── modules/
+│   │       └── <module>.py      ← per-IP analyzer: run(analyzer)
+│   └── test_suite/               ← product that smoke-tests the DumpAnalyzer API
+│       ├── gen_fixtures.py       ← regenerates sample_dumps/ deterministically
+│       └── sample_dumps/         ← one folder per test scenario
+├── tests/                        ← pytest suite (see "Testing" below)
+└── .github/workflows/tests.yml   ← CI: runs pytest on push/PR to main
 ```
 
 ---
@@ -210,3 +215,81 @@ releases/v1.x.x/
     dump.map       ← addresses (from dump_map_gen)
     structs.py     ← struct layouts (from struct_gen or IP-XACT)
 ```
+
+---
+
+## Testing
+
+The project has a `pytest` suite under `tests/`, covering `engine/` (models,
+loader, `DumpAnalyzer`), the `epdc` product, and the `test_suite` product
+itself. It runs locally and in GitHub Actions (`.github/workflows/tests.yml`)
+on every push/PR to `main`, against Python 3.11–3.13.
+
+### Running locally
+```bash
+pip install -r requirements-dev.txt
+python -m pytest                                   # run everything
+python -m pytest --cov --cov-report=term-missing    # with coverage
+python -m pytest tests/test_api.py -v               # a single file
+```
+
+### `products/test_suite/` — the test-suite product
+
+`test_suite` is a real product (same shape as `epdc`): `config.py` +
+`product.py` + five modules:
+- `api_smoke_test.py` — exercises the `DumpAnalyzer` API broadly
+- `tag_consistency_check.py` — FCC-counter-sum vs occupied-tag-count, and
+  pending-tags-are-a-subset-of-occupied
+- `mirror_consistency_check.py` — a "primary" dword must equal its "shadow"
+  dword (redundant/backup register pairs)
+- `sum_check.py` — sum of a region's dwords must equal a separate stored
+  "total" dword (a running-total register next to raw data)
+- `reserved_region_check.py` — reserved/unused memory must stay all-zero
+
+It can be run standalone like any other product:
+```bash
+python main.py products/test_suite/sample_dumps/scenario_01_baseline_no_errors test_suite
+```
+
+Its fixtures live in `products/test_suite/sample_dumps/` (regenerate
+deterministically via `python -m products.test_suite.gen_fixtures`):
+
+**`scenario_*/`** — 7 folders sharing one identical `memory.map` (defined
+once in `fixture_schema.py`): 50 keys, sizes 1–1024 bytes, packed into 5
+non-contiguous 8 KiB memory blocks (5 `*.dump` files per folder, one per
+block — exercising the loader's multi-file merge and the sparse chunk model
+in the same fixture). Like a real firmware dump, the memory is almost
+entirely zero — only ~1.5% of each block holds live data; the rest is
+reserved/unused space. `scenario_01` is the "no errors" baseline; every
+other scenario is a byte-for-byte copy of it with exactly one value changed
+at one key's address, so it introduces exactly one detectable error:
+
+| Scenario | What differs from the baseline |
+|---|---|
+| `scenario_01_baseline_no_errors` | Nothing — everything passes |
+| `scenario_02_fcc_counter_value_error` | One FCC counter cleared → counter sum ≠ occupied-tag count |
+| `scenario_03_occupied_tag_count_error` | One extra tag marked occupied → occupied-tag count ≠ counter sum |
+| `scenario_04_pending_tag_leak` | One tag marked pending that was never occupied → pending ⊄ occupied |
+| `scenario_05_mirror_mismatch` | One shadow register byte flipped → no longer equals its primary |
+| `scenario_06_sum_check_mismatch` | One region dword bumped without updating the total → sum ≠ stored total |
+| `scenario_07_reserved_region_set` | One bit set in memory that must always read zero |
+
+Narrow engine-level behaviors that don't fit the identical-map layout
+(malformed map/dump lines, a zero-byte region, an out-of-bounds region,
+missing dump coverage for a declared key) are covered directly in
+`tests/test_loader.py` and `tests/test_api.py` via `tmp_path`-generated
+files/synthetic objects rather than committed fixtures.
+
+### Adding tests for new code
+
+- **New API method / product / module**: add tests exercising it in the
+  matching `tests/test_*.py` file (`test_api.py` for `DumpAnalyzer`,
+  `test_products_<product>.py` for a product). If it needs a specific dump
+  shape not covered by an existing fixture, add a scenario to
+  `gen_fixtures.py` (or a product's own sample dumps) rather than hand-editing
+  `.map`/`.dump` files.
+- **Any bug found**: add a regression test that fails on the old behavior and
+  passes once fixed — in `tests/test_regression.py`, or alongside the related
+  tests in the relevant `test_*.py` file with a comment cross-referencing it
+  from `test_regression.py`. See that file for the current example (the
+  `DebugREPL` constructor arg-count bug).
