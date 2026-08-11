@@ -4,9 +4,11 @@ from engine.api import DumpAnalyzer
 from products.test_suite.config import MODULES
 
 
-def run(analyzer: DumpAnalyzer) -> None:
+def run(analyzer: DumpAnalyzer, controller_name: str = None) -> None:
     """
-    Called by main.py with a fully built DumpAnalyzer.
+    Called by main.py with a fully built DumpAnalyzer and the CLI's optional
+    controller_name. test_suite has no struct headers, so controller_name
+    is unused here.
     Loads each module listed in config.MODULES and calls its run(analyzer).
     """
     product_dir = Path(__file__).parent

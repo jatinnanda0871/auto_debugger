@@ -3,15 +3,20 @@ auto_debugger — Memory Dump Analysis Framework
 
 Usage
 -----
-    python main.py <dump_folder> <product_id> [--repl]
+    python main.py <dump_folder> <product_id> [controller_name] [--repl]
 
 Arguments
 ---------
-dump_folder : path to a folder containing *.dump files and exactly one *.map file
-product_id  : product name matching a subfolder under products/
-              e.g. "epdc", "ufs", "nvme"
+dump_folder     : path to a folder containing *.dump files and exactly one *.map file
+product_id      : product name matching a subfolder under products/
+                  e.g. "epdc", "ufs", "nvme"
+controller_name : optional — selects which controller-specific struct manifest
+                  product.py should use (e.g. "controller1", "controller2" for
+                  products with more than one controller). Currently optional;
+                  will become required in a future release. Products that don't
+                  use controller-specific structs ignore it.
 
---repl      : drop into interactive GDB-style session after analysis
+--repl          : drop into interactive GDB-style session after analysis
 """
 
 import sys
@@ -49,19 +54,22 @@ def _load_product(product_id: str):
     if not hasattr(module, "run"):
         raise AttributeError(
             f"products/{product_id}/product.py must define: "
-            f"run(analyzer: DumpAnalyzer) -> None"
+            f"run(analyzer: DumpAnalyzer, controller_name: str = None) -> None"
         )
     return module
 
 
 def main():
-    if len(sys.argv) < 3:
+    positional   = [a for a in sys.argv[1:] if not a.startswith("--")]
+    interactive  = "--repl" in sys.argv
+
+    if len(positional) < 2:
         print(__doc__)
         sys.exit(1)
 
-    dump_folder = sys.argv[1]
-    product_id  = sys.argv[2]
-    interactive = "--repl" in sys.argv
+    dump_folder     = positional[0]
+    product_id      = positional[1]
+    controller_name = positional[2] if len(positional) > 2 else None
 
     # ── Build analyzer — main's only job ──────────────────────────────────────
     map_file = find_map_file(dump_folder)
@@ -70,14 +78,12 @@ def main():
     mem      = load_dump(dump_folder)
     analyzer = DumpAnalyzer(mem, regions)
 
-    # ── Keep the product's generated structs current (no-op if the product ────
-    # ── doesn't declare any, or if nothing changed since last generation) ──────
-    analyzer.generate_structs(product_id)
-
-    # ── Hand off to product — main knows nothing beyond this point ────────────
-    print(f"[INFO] Running product '{product_id}'\n")
+    # ── Hand off to product — main knows nothing beyond this point, including ──
+    # ── whether/how it generates structs for the given controller ─────────────
+    print(f"[INFO] Running product '{product_id}'"
+          + (f" (controller '{controller_name}')" if controller_name else "") + "\n")
     product = _load_product(product_id)
-    product.run(analyzer)
+    product.run(analyzer, controller_name)
 
     # ── Optional REPL — always after analysis ─────────────────────────────────
     if interactive:

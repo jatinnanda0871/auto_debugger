@@ -38,14 +38,17 @@ class DumpAnalyzer:
 
     # ── Struct generation ──────────────────────────────────────────────────────
 
-    def generate_structs(self, product_id: str, force: bool = False) -> None:
+    def generate_structs(self, product_id: str, controller_name: str = None,
+                          force: bool = False) -> None:
         """
         Regenerates products/<product_id>/generated_structs/ from that
-        product's C/C++ headers (see products/<product_id>/<product_id>.py).
-        No-op if the product declares no headers, or if nothing changed
-        since the last generation (unless force=True).
+        product's C/C++ headers, listed in the manifest
+        products/<product_id>/<controller_name>.py (or
+        products/<product_id>/<product_id>.py if controller_name is None).
+        No-op if that manifest declares no headers or doesn't exist, or if
+        nothing changed since the last generation (unless force=True).
         """
-        generate_for_product(product_id, force=force)
+        generate_for_product(product_id, controller_name, force=force)
 
     # ── Internal helpers ───────────────────────────────────────────────────────
 

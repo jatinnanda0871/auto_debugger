@@ -201,15 +201,23 @@ def _top_level_records(tu, ci):
 
 # ── Per-product generation ───────────────────────────────────────────────────
 
-def _load_manifest(product_id: str, root: Path):
+def _load_manifest(product_id: str, root: Path, controller_name: str = None):
+    """
+    Manifest file is products/<id>/<controller_name>.py when controller_name
+    is given (one manifest per controller, e.g. "controller1", "controller2"
+    for products with more than one), or products/<id>/<id>.py otherwise
+    (single-controller / not-yet-migrated products).
+    """
     product_dir = (root / "products" / product_id).resolve()
-    manifest_path = product_dir / f"{product_id}.py"
+    manifest_stem = controller_name or product_id
+    manifest_path = product_dir / f"{manifest_stem}.py"
     if not manifest_path.exists():
         raise FileNotFoundError(
             f"struct_gen: no manifest at {manifest_path} "
-            f"(expected products/{product_id}/{product_id}.py with STRUCT_HEADERS)"
+            f"(expected products/{product_id}/{manifest_stem}.py with STRUCT_HEADERS)"
         )
-    spec = importlib.util.spec_from_file_location(f"_struct_gen_manifest_{product_id}", manifest_path)
+    spec = importlib.util.spec_from_file_location(
+        f"_struct_gen_manifest_{product_id}_{manifest_stem}", manifest_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     headers = [(product_dir / h).resolve() for h in module.STRUCT_HEADERS]
@@ -254,22 +262,24 @@ def _accumulate(parts):
         yield acc
 
 
-def generate_for_product(product_id: str, root: Path = ROOT, force: bool = False) -> None:
+def generate_for_product(product_id: str, controller_name: str = None,
+                          root: Path = ROOT, force: bool = False) -> None:
     """
     Regenerates products/<id>/generated_structs/ from the headers listed in
-    products/<id>/<id>.py (STRUCT_HEADERS), unless already up to date.
-    A no-op for products that don't declare a products/<id>/<id>.py manifest
-    -- not every product needs generated structs. Never raises if libclang
-    isn't installed and output already exists -- just warns and leaves the
+    that product's manifest -- products/<id>/<controller_name>.py if
+    controller_name is given, else products/<id>/<id>.py -- unless already
+    up to date. A no-op if that manifest doesn't exist -- not every product
+    (or controller) needs generated structs. Never raises if libclang isn't
+    installed and output already exists -- just warns and leaves the
     existing generated output as-is.
     """
     try:
-        product_dir, manifest_path, headers = _load_manifest(product_id, root)
+        product_dir, manifest_path, headers = _load_manifest(product_id, root, controller_name)
     except FileNotFoundError:
         return
 
     output_dir = product_dir / "generated_structs"
-    marker = output_dir / ".generated_marker"
+    marker = output_dir / f".generated_marker.{controller_name or product_id}"
 
     search_dirs = {h.parent for h in headers}
     watched = [manifest_path, *headers]
@@ -366,7 +376,10 @@ def _generate_for_product(product_id: str, product_dir: Path, headers: list, out
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python -m engine.struct_gen <product_id> [--force]")
+    positional = [a for a in sys.argv[1:] if not a.startswith("--")]
+    if len(positional) < 1:
+        print("Usage: python -m engine.struct_gen <product_id> [controller_name] [--force]")
         sys.exit(1)
-    generate_for_product(sys.argv[1], force="--force" in sys.argv[2:])
+    cli_product_id = positional[0]
+    cli_controller_name = positional[1] if len(positional) > 1 else None
+    generate_for_product(cli_product_id, cli_controller_name, force="--force" in sys.argv[1:])
