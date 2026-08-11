@@ -11,17 +11,20 @@ sizes, and struct layouts — this tool only reads and interprets.
 ```
 auto_debugger/
 ├── main.py                      ← entry point
-├── structs.py                   ← auto-generated ctypes structs (do not edit)
 ├── analyzers.py                 ← standalone analyzer functions
 ├── engine/
 │   ├── models.py                ← Region, Chunk, MemoryView (sparse bytearray)
 │   ├── api.py                   ← DumpAnalyzer public API
 │   ├── loader.py                ← map / dump file loaders (read-only enforced)
+│   ├── struct_gen.py            ← libclang-14 header -> ctypes struct generator
 │   └── repl.py                  ← interactive GDB-style debug REPL
 ├── products/
 │   ├── <product_id>/
 │   │   ├── config.py            ← map key constants + MODULES list
+│   │   ├── <product_id>.py      ← STRUCT_HEADERS list (see "Struct Generation")
 │   │   ├── product.py           ← product entry point: run(analyzer)
+│   │   ├── structs/             ← *.h firmware struct headers (source of truth)
+│   │   ├── generated_structs/   ← struct_gen.py output (git-ignored, regenerated)
 │   │   └── modules/
 │   │       └── <module>.py      ← per-IP analyzer: run(analyzer)
 │   └── test_suite/               ← product that smoke-tests the DumpAnalyzer API
@@ -103,6 +106,11 @@ get_byte(key, byte_offset)                  # single byte within region
 get_base_addr(key)                          # base address of region
 get_region_size_dwords(key)                 # size in dwords
 key_exists(key)                             # bool — key present in map
+```
+
+### Struct generation
+```python
+generate_structs(product_id, force=False)   # regenerate that product's generated_structs/ (see below)
 ```
 
 ### Bit / tag operations
@@ -193,17 +201,62 @@ All map key strings must be declared as constants in `config.py` — never hardc
 
 ## Struct Generation
 
-`structs.py` is auto-generated from firmware headers. Do not edit manually.
+`engine/struct_gen.py` converts a product's C/C++ firmware struct headers
+into ctypes-based Python structs using libclang 14. Generation is per-product:
 
-```bash
-# From firmware headers via struct_gen
-make structs.py
-
-# From IP-XACT
-python ipxact_to_structs.py <file.xml> structs.py
+```
+products/<id>/
+    <id>.py             ← STRUCT_HEADERS = ["structs/a.h", "structs/b.h", ...]
+    structs/            ← *.h headers — the source of truth, edit these
+    generated_structs/  ← struct_gen.py output — git-ignored, do not edit
 ```
 
-Always analyze a dump with the `structs.py` and `*.map` from the matching firmware release.
+Reached through the public API, not called directly:
+```python
+analyzer.generate_structs(product_id)              # regenerate if headers changed
+analyzer.generate_structs(product_id, force=True)   # regenerate unconditionally
+```
+
+It also runs automatically (as a no-op if nothing's stale) from both
+`main.py` and `products/<id>/product.py`, so a fresh checkout regenerates on
+first run without any manual step. Products that don't declare a
+`<id>.py` manifest simply skip struct generation.
+
+For scripting/CI, the same thing is available as a CLI:
+```bash
+python -m engine.struct_gen <product_id>            # regenerate if headers changed
+python -m engine.struct_gen <product_id> --force     # regenerate unconditionally
+```
+
+Key properties:
+- **Output mirrors input 1:1** — `structs/a.h` → `generated_structs/structs/a.py`.
+  Class and field names are copied verbatim from the C names; no mangling.
+- **Each header is parsed independently** (never combined into one
+  translation unit), so identical struct/union names in unrelated headers
+  never collide. If header B needs a type from header A, `#include "a.h"`
+  directly in B — struct_gen detects the type actually originates in A (via
+  source location) and emits `from ...a import TypeName` instead of a
+  duplicate class.
+- **Header dependencies are topologically sorted** before generation, from
+  the cross-file references above — you don't need to list headers in any
+  particular order in `STRUCT_HEADERS`.
+- **Type mapping is by canonical type kind, not spelling** — register-access
+  macros (`#define REG_UINT8 volatile uint8_t`) and `const`/`volatile`
+  qualifiers resolve to the same ctypes mapping as the plain type would.
+  Platform-ambiguous types (`long`, `unsigned long`) are deliberately
+  unsupported — use fixed-width types (or macros expanding to them).
+- **`_pack_ = 1`** on every generated class — layout must match the raw
+  firmware struct byte-for-byte, so no compiler alignment padding applies.
+- **Bitfield allocation order is compiler-ABI-defined** (MSVC vs
+  Itanium/GCC/Clang pack bits in opposite directions) — struct_gen must run
+  against the same target ABI the firmware was compiled with, or bitfield
+  values will read back wrong even though total struct size still matches.
+
+Once generated, cast any address to a struct with `from_address`:
+```python
+from products.epdc.generated_structs.structs.big_struct import BigStruct64
+s = BigStruct64.from_address(addr)   # live, zero-copy view onto that memory
+```
 
 ---
 
@@ -212,8 +265,8 @@ Always analyze a dump with the `structs.py` and `*.map` from the matching firmwa
 ```
 releases/v1.x.x/
     firmware.bin
-    dump.map       ← addresses (from dump_map_gen)
-    structs.py     ← struct layouts (from struct_gen or IP-XACT)
+    dump.map              ← addresses (from dump_map_gen)
+    generated_structs/    ← struct layouts (from struct_gen, per product)
 ```
 
 ---

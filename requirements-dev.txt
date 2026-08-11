@@ -2,3 +2,8 @@
 # dependencies beyond the Python 3.11+ standard library.
 pytest>=8.0
 pytest-cov>=5.0
+
+# Codegen-time only (struct_gen.py: structs.h -> structs.py). Not needed at
+# analysis runtime if structs.py is already up to date with structs.h --
+# struct_gen.generate_if_stale() skips the import entirely in that case.
+libclang==14.0.6

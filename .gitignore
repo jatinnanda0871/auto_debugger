@@ -41,3 +41,6 @@ Thumbs.db
 /scratch/
 *.local.dump
 *.local.map
+
+# ── Generated structs (struct_gen.py output — regenerated from *.h) ───────
+products/*/generated_structs/

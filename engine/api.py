@@ -2,6 +2,7 @@ import ctypes
 import sys
 from typing import Optional
 from engine.models import MemoryView, Region
+from engine.struct_gen import generate_for_product
 
 
 class DumpAnalyzer:
@@ -34,6 +35,17 @@ class DumpAnalyzer:
             raise KeyError(f"Key '{key}' not found in map. "
                            f"Available: {list(self._regions.keys())}")
         return region
+
+    # ── Struct generation ──────────────────────────────────────────────────────
+
+    def generate_structs(self, product_id: str, force: bool = False) -> None:
+        """
+        Regenerates products/<product_id>/generated_structs/ from that
+        product's C/C++ headers (see products/<product_id>/<product_id>.py).
+        No-op if the product declares no headers, or if nothing changed
+        since the last generation (unless force=True).
+        """
+        generate_for_product(product_id, force=force)
 
     # ── Internal helpers ───────────────────────────────────────────────────────
 
