@@ -1,8 +1,10 @@
-# ── EPDC struct manifest ────────────────────────────────────────────────────────
+# ── EPDC struct manifest (product-wide fallback) ────────────────────────────────
 #
-# Named after the product id (matches the CLI argument / products/<id> folder)
-# so struct_gen can find it purely from the product id string, the same way
-# main.py locates products/<id>/product.py.
+# Used when main.py is invoked without a controller_name (python main.py
+# <dump> epdc). Products with more than one controller instead ship one
+# manifest per controller — see controller1.py / controller2.py — each with
+# its own STRUCT_HEADERS, selected via the CLI's 3rd argument
+# (python main.py <dump> epdc controller1).
 #
 # Paths are relative to this file's directory and use forward slashes, which
 # pathlib resolves correctly on both Windows and Linux.

@@ -40,20 +40,28 @@ auto_debugger/
 
 ### Automated analysis
 ```bash
-python main.py <dump_folder> <product_id>
+python main.py <dump_folder> <product_id> [controller_name]
 ```
 
 ### Interactive REPL session
 ```bash
-python main.py <dump_folder> <product_id> --repl
+python main.py <dump_folder> <product_id> [controller_name] --repl
 ```
 
 `dump_folder` must contain one `*.map` file and one or more `*.dump` files.
 
+`controller_name` is optional (currently — it will become required in a
+future release) and selects which controller-specific struct manifest
+`product.py` generates from, for products with more than one controller
+(e.g. `epdc`'s `controller1.py` / `controller2.py`, each with its own
+`STRUCT_HEADERS`). Omit it to fall back to the product-wide manifest
+(`products/<id>/<id>.py`), or for products with no controllers at all.
+
 Example:
 ```bash
 python main.py ./dumps/run1 epdc
-python main.py ./dumps/run1 epdc --repl
+python main.py ./dumps/run1 epdc controller1
+python main.py ./dumps/run1 epdc controller1 --repl
 ```
 
 ---
@@ -110,7 +118,7 @@ key_exists(key)                             # bool — key present in map
 
 ### Struct generation
 ```python
-generate_structs(product_id, force=False)   # regenerate that product's generated_structs/ (see below)
+generate_structs(product_id, controller_name=None, force=False)   # regenerate generated_structs/ (see below)
 ```
 
 ### Bit / tag operations
@@ -169,7 +177,7 @@ Create a folder under `products/` with this layout:
 products/my_product/
     __init__.py
     config.py        ← declare MODULES list and all map key constants
-    product.py       ← define run(analyzer: DumpAnalyzer) -> None
+    product.py       ← define run(analyzer: DumpAnalyzer, controller_name: str = None) -> None
     modules/
         my_module.py ← define run(analyzer: DumpAnalyzer) -> None
 ```
@@ -206,26 +214,30 @@ into ctypes-based Python structs using libclang 14. Generation is per-product:
 
 ```
 products/<id>/
-    <id>.py             ← STRUCT_HEADERS = ["structs/a.h", "structs/b.h", ...]
+    <id>.py             ← fallback manifest: STRUCT_HEADERS = ["structs/a.h", ...]
+    <controller>.py     ← per-controller manifest (e.g. controller1.py, controller2.py)
     structs/            ← *.h headers — the source of truth, edit these
     generated_structs/  ← struct_gen.py output — git-ignored, do not edit
 ```
 
 Reached through the public API, not called directly:
 ```python
-analyzer.generate_structs(product_id)              # regenerate if headers changed
-analyzer.generate_structs(product_id, force=True)   # regenerate unconditionally
+analyzer.generate_structs(product_id)                                # fallback <id>.py manifest
+analyzer.generate_structs(product_id, controller_name="controller1")  # that controller's manifest
+analyzer.generate_structs(product_id, "controller1", force=True)      # regenerate unconditionally
 ```
 
 It also runs automatically (as a no-op if nothing's stale) from both
-`main.py` and `products/<id>/product.py`, so a fresh checkout regenerates on
-first run without any manual step. Products that don't declare a
-`<id>.py` manifest simply skip struct generation.
+`main.py` (which passes through its own optional `controller_name` CLI arg)
+and `products/<id>/product.py`, so a fresh checkout regenerates on first run
+without any manual step. A no-op if the resolved manifest
+(`<controller_name>.py`, or `<id>.py` when no controller is given) doesn't
+exist for that product.
 
 For scripting/CI, the same thing is available as a CLI:
 ```bash
-python -m engine.struct_gen <product_id>            # regenerate if headers changed
-python -m engine.struct_gen <product_id> --force     # regenerate unconditionally
+python -m engine.struct_gen <product_id> [controller_name]            # regenerate if headers changed
+python -m engine.struct_gen <product_id> [controller_name] --force     # regenerate unconditionally
 ```
 
 Key properties:

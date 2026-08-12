@@ -4,16 +4,16 @@ from engine.api import DumpAnalyzer
 from products.epdc.config import MODULES
 
 
-def run(analyzer: DumpAnalyzer) -> None:
+def run(analyzer: DumpAnalyzer, controller_name: str = None) -> None:
     """
-    Called by main.py with a fully built DumpAnalyzer.
+    Called by main.py with a fully built DumpAnalyzer and the CLI's optional
+    controller_name (e.g. "controller1", "controller2" — selects which
+    controller-specific struct manifest to generate from; falls back to the
+    product-wide epdc.py manifest if omitted).
     Loads each module listed in config.MODULES and calls its run(analyzer).
     """
     product_dir = Path(__file__).parent
-
-    # Redundant with main.py's own call, but products can also be run/tested
-    # standalone without going through main.py — keep generated structs current here too.
-    analyzer.generate_structs(product_dir.name)
+    analyzer.generate_structs(product_dir.name, controller_name)
 
     for module_name in MODULES:
         module_path = product_dir / "modules" / f"{module_name}.py"
