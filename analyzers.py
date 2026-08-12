@@ -39,7 +39,6 @@ def analyze_fcc_counter(analyzer: DumpAnalyzer) -> None:
     print(f"  fcc_count_field_size : {fcc_counter_size} bits  (mask=0x{fcc_mask:08X})")
 
     func_count    = analyzer.get_region_size_dwords("FccManager::counters")
-    counters_base = analyzer.get_base_addr("FccManager::counters")
     print(f"  Total Functions  : {func_count}  (derived from region size)")
 
     print(f"\n  {'Function':<12} {'Raw Dword':<12} {'FCC Counter':<12}")

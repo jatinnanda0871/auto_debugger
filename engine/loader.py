@@ -31,12 +31,12 @@ def load_map(map_file: str) -> dict:
                 print(f"[WARN] Map line {lineno}: unexpected format — '{line}'")
                 continue
             name, addr_str, size_str = m.group(1), m.group(2), m.group(3)
-            size_dwords = int(size_str, 16) // 4
-            base_addr   = int(addr_str, 16) if addr_str.startswith("0x") or addr_str.startswith("0X") else int(addr_str)
+            size_bytes = int(size_str, 16)
+            base_addr  = int(addr_str, 16) if addr_str.startswith("0x") or addr_str.startswith("0X") else int(addr_str)
             regions[name] = Region(
                 name=name,
                 base_addr=base_addr,
-                size_dwords=size_dwords,
+                size_bytes=size_bytes,
             )
     return regions
 

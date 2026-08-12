@@ -41,12 +41,26 @@ class DumpAnalyzer:
         # Kept for internal call sites; delegates to the public accessor.
         return self.get_region(key)
 
+    def _check_bounds(self, region: Region, byte_offset: int, n_bytes: int) -> None:
+        if byte_offset + n_bytes > region.size_bytes:
+            raise ValueError(
+                f"Out-of-bounds read on '{region.name}': "
+                f"offset 0x{byte_offset:X}+{n_bytes}B exceeds region size "
+                f"0x{region.size_bytes:X}B ({region.size_dwords} dwords)"
+            )
+
     def _get_dword(self, key: str) -> int:
         region = self._get_region(key)
-        dword  = self._mem.read_dword(region.base_addr)
-        if dword is None:
-            raise ValueError(f"Key '{key}' at 0x{region.base_addr:08X} not in dump")
-        return dword
+        if region.size_bytes == 0:
+            raise ValueError(f"Key '{key}' has a zero-byte region — nothing to read")
+        n      = min(region.size_bytes, 4)
+        result = 0
+        for i in range(n):
+            b = self._mem.read_byte(region.base_addr + i)
+            if b is None:
+                raise ValueError(f"Key '{key}' at 0x{region.base_addr + i:08X} not in dump")
+            result |= b << (i * 8)
+        return result
 
     # ── Core access ────────────────────────────────────────────────────────────
 
@@ -55,13 +69,9 @@ class DumpAnalyzer:
         If is_address=True  → reads dword from dump at region base address.
         If is_address=False → returns the base_addr field directly as literal.
         """
-        region = self._get_region(key)
         if not is_address:
-            return region.base_addr
-        dword = self._mem.read_dword(region.base_addr)
-        if dword is None:
-            raise ValueError(f"Key '{key}' at 0x{region.base_addr:08X} not in dump")
-        return dword
+            return self._get_region(key).base_addr
+        return self._get_dword(key)
 
     def get_region_dwords(self, key: str) -> list:
         region = self._get_region(key)
@@ -76,6 +86,7 @@ class DumpAnalyzer:
 
     def get_byte(self, key: str, byte_offset: int) -> int:
         region = self._get_region(key)
+        self._check_bounds(region, byte_offset, 1)
         val    = self._mem.read_byte(region.base_addr + byte_offset)
         if val is None:
             raise ValueError(f"Byte at 0x{region.base_addr + byte_offset:08X} not in dump")
@@ -112,6 +123,7 @@ class DumpAnalyzer:
         region    = self._get_region(key)
         dw_index  = tag_index // 32
         bit_index = tag_index % 32
+        self._check_bounds(region, dw_index * 4, 4)
         dword     = self._mem.read_dword(region.base_addr + dw_index * 4)
         if dword is None:
             raise ValueError(f"Key '{key}' dword {dw_index} not in dump")
@@ -129,6 +141,7 @@ class DumpAnalyzer:
                                 bit_offset: int, bit_width: int) -> int:
         """Extracts a bitfield from a dword at byte_offset within the region."""
         region = self._get_region(key)
+        self._check_bounds(region, byte_offset, 4)
         dword  = self._mem.read_dword(region.base_addr + byte_offset)
         if dword is None:
             raise ValueError(f"'{key}'+0x{byte_offset:X} not in dump")
