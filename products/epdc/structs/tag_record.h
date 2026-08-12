@@ -8,9 +8,9 @@
 
 #pragma pack(push, 1)
 
-typedef struct {
+struct TagRecord {
     BigStruct64 payload;
     uint32_t    tag_id;
-} TagRecord;
+};
 
 #pragma pack(pop)
