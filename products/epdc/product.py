@@ -11,6 +11,10 @@ def run(analyzer: DumpAnalyzer) -> None:
     """
     product_dir = Path(__file__).parent
 
+    # Redundant with main.py's own call, but products can also be run/tested
+    # standalone without going through main.py — keep generated structs current here too.
+    analyzer.generate_structs(product_dir.name)
+
     for module_name in MODULES:
         module_path = product_dir / "modules" / f"{module_name}.py"
         if not module_path.exists():

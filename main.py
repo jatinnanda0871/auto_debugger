@@ -70,6 +70,10 @@ def main():
     mem      = load_dump(dump_folder)
     analyzer = DumpAnalyzer(mem, regions)
 
+    # ── Keep the product's generated structs current (no-op if the product ────
+    # ── doesn't declare any, or if nothing changed since last generation) ──────
+    analyzer.generate_structs(product_id)
+
     # ── Hand off to product — main knows nothing beyond this point ────────────
     print(f"[INFO] Running product '{product_id}'\n")
     product = _load_product(product_id)
