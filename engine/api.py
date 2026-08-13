@@ -1,4 +1,5 @@
 import ctypes
+import operator
 import sys
 from typing import Optional
 from engine.models import MemoryView, Region
@@ -139,16 +140,13 @@ class DumpAnalyzer:
                 )
             raw[i] = b
 
-        value = struct_cls.from_buffer_copy(bytes(raw))
-        for part in field_path.split("."):
-            try:
-                value = getattr(value, part)
-            except AttributeError:
-                raise AttributeError(
-                    f"{struct_cls.__name__} has no field '{part}' "
-                    f"(from field_path '{field_path}')"
-                )
-        return value
+        instance = struct_cls.from_buffer_copy(bytes(raw))
+        try:
+            return operator.attrgetter(field_path)(instance)
+        except AttributeError:
+            raise AttributeError(
+                f"{struct_cls.__name__} has no field '{field_path}'"
+            )
 
     def get_region_size_dwords(self, key: str) -> int:
         return self._get_region(key).size_dwords
