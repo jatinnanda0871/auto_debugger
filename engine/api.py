@@ -110,6 +110,46 @@ class DumpAnalyzer:
     def get_base_addr(self, key: str) -> int:
         return self._get_region(key).base_addr
 
+    def get_struct_field(self, key: str, struct_cls: type, field_path: str,
+                          byte_offset: int = 0):
+        """
+        Interprets the bytes at key's region (starting at byte_offset) as
+        struct_cls -- a ctypes Structure/Union from a product's
+        generated_structs/ -- and returns the value of one field.
+
+        field_path may be a plain field name ("status") or a dotted path
+        into nested structs/unions ("dword0.bits.error_code"), matching how
+        the generated ctypes classes mirror the original C struct layout.
+
+        Example:
+            from products.epdc.generated_structs.status import DemoStatus
+            value = analyzer.get_struct_field("IP::status", DemoStatus, "dword0.bits.error_code")
+        """
+        region = self._get_region(key)
+        size   = ctypes.sizeof(struct_cls)
+        self._check_bounds(region, byte_offset, size)
+
+        raw = bytearray(size)
+        for i in range(size):
+            b = self._mem.read_byte(region.base_addr + byte_offset + i)
+            if b is None:
+                raise ValueError(
+                    f"'{key}'+0x{byte_offset + i:X} not in dump "
+                    f"(reading {struct_cls.__name__})"
+                )
+            raw[i] = b
+
+        value = struct_cls.from_buffer_copy(bytes(raw))
+        for part in field_path.split("."):
+            try:
+                value = getattr(value, part)
+            except AttributeError:
+                raise AttributeError(
+                    f"{struct_cls.__name__} has no field '{part}' "
+                    f"(from field_path '{field_path}')"
+                )
+        return value
+
     def get_region_size_dwords(self, key: str) -> int:
         return self._get_region(key).size_dwords
 

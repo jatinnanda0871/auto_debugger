@@ -1,3 +1,5 @@
+import ctypes
+
 import pytest
 
 from engine.api import DumpAnalyzer
@@ -81,6 +83,66 @@ def test_get_base_addr(basic_analyzer):
 
 def test_get_region_size_dwords(basic_analyzer):
     assert basic_analyzer.get_region_size_dwords("A::tags") == 4
+
+
+# ── struct field access ──────────────────────────────────────────────────────
+# Mirrors the shape struct_gen.py emits: LittleEndian{Structure,Union},
+# _pack_ = 1, a raw/bits union over a bitfield sub-struct.
+
+class _DemoBits(ctypes.LittleEndianStructure):
+    _pack_ = 1
+    _fields_ = [
+        ("error_code", ctypes.c_uint32, 8),
+        ("reserved",   ctypes.c_uint32, 24),
+    ]
+
+
+class _DemoDword0(ctypes.LittleEndianUnion):
+    _pack_ = 1
+    _fields_ = [
+        ("raw",  ctypes.c_uint32),
+        ("bits", _DemoBits),
+    ]
+
+
+class _DemoStatus(ctypes.LittleEndianStructure):
+    _pack_ = 1
+    _fields_ = [
+        ("dword0", _DemoDword0),
+        ("count",  ctypes.c_uint16),
+    ]
+
+
+def test_get_struct_field_reads_plain_field(basic_analyzer):
+    assert basic_analyzer.get_struct_field("A::tags", _DemoStatus, "dword0.raw") == 0x00000007
+
+
+def test_get_struct_field_reads_nested_bitfield(basic_analyzer):
+    # dword0 = 0x00000007 -> low byte (error_code) = 7
+    assert basic_analyzer.get_struct_field("A::tags", _DemoStatus, "dword0.bits.error_code") == 7
+
+
+def test_get_struct_field_reads_field_at_byte_offset(basic_analyzer):
+    # dword2 = 0xFFFFFFFF, at byte offset 8 within the region
+    assert basic_analyzer.get_struct_field(
+        "A::tags", _DemoStatus, "dword0.raw", byte_offset=8) == 0xFFFFFFFF
+
+
+def test_get_struct_field_raises_on_out_of_bounds_offset(basic_analyzer):
+    with pytest.raises(ValueError, match="Out-of-bounds"):
+        basic_analyzer.get_struct_field("A::tags", _DemoStatus, "dword0.raw", byte_offset=16)
+
+
+def test_get_struct_field_raises_when_bytes_not_in_dump():
+    regions = {"M::missing": Region(name="M::missing", base_addr=0x4000, size_bytes=8)}
+    a = make_analyzer(regions, [])  # no chunks -- nothing backed
+    with pytest.raises(ValueError, match="not in dump"):
+        a.get_struct_field("M::missing", _DemoStatus, "dword0.raw")
+
+
+def test_get_struct_field_raises_attribute_error_for_unknown_field(basic_analyzer):
+    with pytest.raises(AttributeError, match="no field 'nope'"):
+        basic_analyzer.get_struct_field("A::tags", _DemoStatus, "nope")
 
 
 # ── zero-byte region / partial-read regressions ─────────────────────────────

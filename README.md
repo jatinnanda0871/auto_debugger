@@ -115,6 +115,11 @@ get_byte(key, byte_offset)                  # single byte within region
 get_base_addr(key)                          # base address of region
 get_region_size_dwords(key)                 # size in dwords
 key_exists(key)                             # bool — key present in map
+get_struct_field(key, struct_cls, field_path, byte_offset=0)
+                                             # interprets bytes at key (+byte_offset) as
+                                             # struct_cls (a generated_structs class) and
+                                             # returns one field; field_path may be dotted
+                                             # ("dword0.bits.error_code") for nested fields
 ```
 
 ### Struct generation
