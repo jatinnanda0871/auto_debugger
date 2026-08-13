@@ -11,7 +11,7 @@ from engine.loader import load_map, load_dump, find_map_file
 from engine.api import DumpAnalyzer
 
 TEST_SUITE_DUMPS = ROOT / "products" / "test_suite" / "sample_dumps"
-ROOT_SAMPLE_DUMPS = ROOT / "sample_dump"
+EPDC_SAMPLE_DUMPS = ROOT / "products" / "epdc" / "sample_dump"
 
 
 def build_analyzer(dump_folder: Path) -> DumpAnalyzer:
@@ -44,10 +44,10 @@ def identical_layout_scenario(request):
     return TEST_SUITE_DUMPS / request.param
 
 
-@pytest.fixture(params=sorted(p.name for p in ROOT_SAMPLE_DUMPS.iterdir() if p.is_dir()))
-def root_sample_scenario(request):
-    """Parametrized over every scenario under the repo's sample_dump/ folder."""
-    return ROOT_SAMPLE_DUMPS / request.param
+@pytest.fixture(params=sorted(p.name for p in EPDC_SAMPLE_DUMPS.iterdir() if p.is_dir()))
+def epdc_sample_scenario(request):
+    """Parametrized over every scenario under products/epdc/sample_dump/."""
+    return EPDC_SAMPLE_DUMPS / request.param
 
 
 @pytest.fixture

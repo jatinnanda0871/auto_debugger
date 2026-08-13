@@ -61,8 +61,8 @@ def test_main_nonexistent_dump_folder_fails_cleanly():
     assert result.returncode != 0
 
 
-def test_main_runs_epdc_against_root_sample_dump():
-    dump_folder = str(ROOT / "sample_dump" / "1_halted_1")
+def test_main_runs_epdc_against_sample_dump():
+    dump_folder = str(ROOT / "products" / "epdc" / "sample_dump" / "1_halted_1")
     result = run_main(dump_folder, "epdc")
     assert result.returncode == 0
     assert "[PASS]" in result.stdout

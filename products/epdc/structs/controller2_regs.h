@@ -6,7 +6,7 @@
 
 #pragma pack(push, 1)
 
-typedef struct {
+struct Controller2Status {
     REG_UINT8  link_state;
     REG_UINT8  error_code;
     REG_UINT16 frame_count;
@@ -15,6 +15,6 @@ typedef struct {
         uint32_t speed_mode    : 2;
         uint32_t reserved      : 29;
     } control;
-} Controller2Status;
+};
 
 #pragma pack(pop)

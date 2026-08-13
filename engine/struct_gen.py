@@ -1,21 +1,32 @@
 """
-struct_gen.py — converts a product's C/C++ firmware struct headers into
+struct_gen.py — converts a product's C++ firmware struct headers into
 ctypes-based Python structs, using libclang 14.
 
 Per-product, not global: each product declares its header list in
 products/<id>/<id>.py (STRUCT_HEADERS, paths relative to that file's
-directory). struct_gen parses *each header as its own independent
-translation unit* — never combined into one — so identical struct/union
-names in unrelated headers never collide at parse time. If header B
-`#include`s header A directly (the supported way to reference A's types
-from B), struct_gen detects that a type came from a different file (via
-libclang's own source-location tracking) and emits an import instead of a
-duplicate class.
+directory), and optionally an INCLUDE_PATHS list of extra directories
+(also relative to that file's directory, but may point anywhere -- they
+don't need to share a subpath with the product) to search for headers
+pulled in via `#include` that aren't themselves in STRUCT_HEADERS (e.g.
+a shared SDK header). struct_gen parses *each header as its own
+independent translation unit* — never combined into one — so identical
+struct/union names in unrelated headers never collide at parse time. If
+header B `#include`s header A directly (the supported way to reference
+A's types from B), struct_gen detects that a type came from a different
+file (via libclang's own source-location tracking) and emits an import
+instead of a duplicate class.
 
-Output mirrors the header layout 1:1 under products/<id>/generated_structs/
-(git-ignored — fully derived from the .h files): dword0_status_t defined in
-structs/big_struct.h becomes the class `dword0_status_t` in
-generated_structs/structs/big_struct.py. Names are never mangled.
+Headers are parsed as C++ (not C) — `extern "C" { ... }` linkage blocks
+are unwrapped transparently, so structs/unions declared inside one are
+picked up exactly as if they weren't wrapped.
+
+Output is flat, not mirrored: every header in STRUCT_HEADERS produces one
+file directly under products/<id>/generated_structs/ (git-ignored — fully
+derived from the .h files), named after the header's stem regardless of
+where the header lives on disk: structs/big_struct.h becomes
+generated_structs/big_struct.py. Names are never mangled. Two headers
+that share a stem is a configuration error (struct_gen raises rather than
+letting one silently overwrite the other).
 
 Usage
 -----
@@ -43,6 +54,8 @@ ROOT = Path(__file__).parent.parent  # repo root — this file lives in engine/
 # so silently mapping them would risk a layout mismatch. Firmware headers
 # should use fixed-width types (or macros expanding to them) instead.
 _TYPE_KIND_MAP = {}
+
+_RST_PREFIX = "rst"
 
 
 def _ctype_for(clang_type) -> str:
@@ -79,13 +92,17 @@ def _ctype_for(clang_type) -> str:
 
 def _named_record_ref(field_type, ci):
     """
-    If field_type (or its array element type) is a typedef to a struct/union,
-    returns that typedef's cursor. Otherwise returns None.
+    If field_type (or its array element type) refers to a named struct/union
+    -- either via a typedef, or directly by the record's own tag name (valid
+    in C++, unlike C: `struct DemoStatus status;` needs no typedef there) --
+    returns that struct/union's own definition cursor. Otherwise returns None.
     """
     elem_type = (field_type.get_array_element_type()
                  if field_type.kind == ci.TypeKind.CONSTANTARRAY else field_type)
     decl = elem_type.get_declaration()
     if decl.kind == ci.CursorKind.TYPEDEF_DECL and elem_type.get_canonical().kind == ci.TypeKind.RECORD:
+        return decl
+    if decl.kind in (ci.CursorKind.STRUCT_DECL, ci.CursorKind.UNION_DECL) and not decl.is_anonymous():
         return decl
     return None
 
@@ -107,9 +124,55 @@ def _referenced_named_types(record_cursor, ci) -> set:
     return refs
 
 
-def _emit_record(cursor, class_name: str, lines: list, ci) -> None:
+def _rst_derived_union_name(union_decl, ci):
+    """
+    Project naming convention for a truly-anonymous union member (no field
+    name of its own -- the C/C++ "anonymous union" form): if one of its
+    direct fields is a named struct/union carrying the 'rst' prefix (e.g.
+    `struct {...} rstmystruct2;`), the union itself is named by stripping
+    that prefix and prepending 'union' -- 'rstmystruct2' -> 'unionmystruct2'.
+    Returns None if no such field exists, so the caller can fall back to a
+    generated name.
+    """
+    for child in union_decl.get_children():
+        if child.kind == ci.CursorKind.FIELD_DECL and child.spelling.startswith(_RST_PREFIX):
+            return "union" + child.spelling[len(_RST_PREFIX):]
+    return None
+
+
+def _decl_key(decl):
+    """Identity key for a declaration cursor, stable across the different
+    paths libclang lets you reach the *same* underlying decl (e.g. directly
+    as a child cursor vs. via a field's `.type.get_declaration()`) -- source
+    location is that stable identity; `cursor ==` / `.hash` are not reliably
+    consistent across those paths in libclang 14."""
+    loc = decl.extent.start
+    return (loc.file.name if loc.file else None, loc.offset)
+
+
+def _unique_name(preferred, fallback: str, used_names: set) -> str:
+    """
+    Returns `preferred` if it's free (and not None); otherwise `fallback` if
+    that's free; otherwise `fallback` suffixed with an incrementing counter.
+    Never raises -- struct/union field names repeat across a header often
+    enough (e.g. multiple dwordN_t unions each with a `bits` sub-struct)
+    that failing generation over it would be worse than a slightly uglier
+    but still-correct fallback name.
+    """
+    if preferred and preferred not in used_names:
+        return preferred
+    if fallback not in used_names:
+        return fallback
+    i = 2
+    while f"{fallback}{i}" in used_names:
+        i += 1
+    return f"{fallback}{i}"
+
+
+def _emit_record(cursor, class_name: str, lines: list, ci, used_names: set) -> None:
     """Emits one ctypes.LittleEndian{Structure,Union} subclass for a
     STRUCT_DECL/UNION_DECL cursor."""
+    used_names.add(class_name)
     base = "LittleEndianUnion" if cursor.kind == ci.CursorKind.UNION_DECL else "LittleEndianStructure"
 
     # Nested (anonymous) records are fully emitted as their own top-level
@@ -117,8 +180,41 @@ def _emit_record(cursor, class_name: str, lines: list, ci) -> None:
     # bound by the time this class's `_fields_` list is evaluated, and
     # building `fields` first (nested emission is a side effect of that)
     # keeps the two blocks from interleaving.
+    # libclang lists the definition of a *named* field's anonymous-tag type
+    # (`struct {...} grp1;`) as its own STRUCT_DECL/UNION_DECL sibling child,
+    # in addition to the FIELD_DECL 'grp1' that uses it -- same struct, two
+    # cursors. Only a record with no such owning FIELD_DECL is a true C/C++
+    # anonymous member (`union {...};`, no trailing name); collect the
+    # "owned" ones first so the loop below can tell the two apart instead of
+    # emitting the struct/union twice under different names.
+    owned_decl_keys = set()
+    for child in cursor.get_children():
+        if child.kind == ci.CursorKind.FIELD_DECL:
+            d = child.type.get_declaration()
+            if d.kind in (ci.CursorKind.STRUCT_DECL, ci.CursorKind.UNION_DECL):
+                owned_decl_keys.add(_decl_key(d))
+
     fields, anon_nested = [], []
+    anon_index = 0
     for field in cursor.get_children():
+        if field.kind in (ci.CursorKind.STRUCT_DECL, ci.CursorKind.UNION_DECL) \
+                and _decl_key(field) not in owned_decl_keys:
+            # True anonymous struct/union member -- `union {...};` with no
+            # trailing name. libclang surfaces these as a bare STRUCT_DECL/
+            # UNION_DECL child, not wrapped in a FIELD_DECL, so they must be
+            # caught here rather than in the FIELD_DECL branch below. Its
+            # fields promote up to this class via ctypes' `_anonymous_`,
+            # matching C/C++ anonymous-member semantics.
+            decl = field
+            preferred = (_rst_derived_union_name(decl, ci)
+                         if decl.kind == ci.CursorKind.UNION_DECL else None)
+            nested_name = _unique_name(preferred, f"_{class_name}_anon{anon_index}", used_names)
+            anon_index += 1
+            _emit_record(decl, nested_name, lines, ci, used_names)
+            fields.append(f'("{nested_name}", {nested_name})')
+            anon_nested.append(nested_name)
+            continue
+
         if field.kind != ci.CursorKind.FIELD_DECL:
             continue
         name = field.spelling
@@ -139,10 +235,28 @@ def _emit_record(cursor, class_name: str, lines: list, ci) -> None:
 
         decl = ftype.get_declaration()
         if decl.kind in (ci.CursorKind.STRUCT_DECL, ci.CursorKind.UNION_DECL) and decl.is_anonymous():
-            nested_name = f"_{class_name}_{name}"
-            _emit_record(decl, nested_name, lines, ci)
-            fields.append(f'("{name}", {nested_name})')
-            anon_nested.append(name)
+            if name:
+                # `struct {...} grp1;` -- the type has no tag, but the field
+                # itself is named, so it is NOT a C/C++ anonymous member:
+                # access stays `obj.grp1.x`, never promoted to `obj.x`.
+                nested_name = _unique_name(name, f"_{class_name}_{name}", used_names)
+                field_key = name
+                promote = False
+            else:
+                # `union {...};` / `struct {...};` with no trailing name --
+                # a real anonymous member; its fields promote up to this
+                # class via ctypes' `_anonymous_`, matching C/C++ semantics.
+                preferred = (_rst_derived_union_name(decl, ci)
+                             if decl.kind == ci.CursorKind.UNION_DECL else None)
+                nested_name = _unique_name(preferred, f"_{class_name}_anon{anon_index}", used_names)
+                anon_index += 1
+                field_key = nested_name
+                promote = True
+
+            _emit_record(decl, nested_name, lines, ci, used_names)
+            fields.append(f'("{field_key}", {nested_name})')
+            if promote:
+                anon_nested.append(field_key)
             continue
 
         base_ctype = _ctype_for(ftype)
@@ -163,11 +277,12 @@ def _emit_record(cursor, class_name: str, lines: list, ci) -> None:
     lines.append("")
 
 
-def _parse_header(header_path: Path):
+def _parse_header(header_path: Path, include_paths: list):
     import clang.cindex as ci
 
     index = ci.Index.create()
-    tu = index.parse(str(header_path), args=["-x", "c", "-std=c11"])
+    args = ["-x", "c++", "-std=c++17"] + [f"-I{p}" for p in include_paths]
+    tu = index.parse(str(header_path), args=args)
     errors = [d for d in tu.diagnostics if d.severity >= ci.Diagnostic.Error]
     if errors:
         raise SyntaxError(
@@ -177,12 +292,26 @@ def _parse_header(header_path: Path):
     return tu, ci
 
 
+def _iter_toplevel_decls(cursor, ci):
+    """Children of `cursor`, transparently descending into `extern "C" {
+    ... }` linkage-spec blocks so struct/union/typedef decls inside one are
+    yielded exactly as if they weren't wrapped. libclang reports these
+    blocks as LINKAGE_SPEC in some versions and as an anonymous
+    UNEXPOSED_DECL in others -- both are unwrapped the same way."""
+    for child in cursor.get_children():
+        if child.kind in (ci.CursorKind.LINKAGE_SPEC, ci.CursorKind.UNEXPOSED_DECL):
+            yield from _iter_toplevel_decls(child, ci)
+        else:
+            yield child
+
+
 def _top_level_records(tu, ci):
     """Yields (name, cursor, origin_file) for every named struct/union
     definition reachable from this translation unit -- including ones
-    pulled in transitively via #include -- in source order."""
+    pulled in transitively via #include, and ones inside `extern "C"`
+    blocks -- in source order."""
     seen = set()
-    for cursor in tu.cursor.get_children():
+    for cursor in _iter_toplevel_decls(tu.cursor, ci):
         decl, name = None, None
         if cursor.kind == ci.CursorKind.TYPEDEF_DECL:
             underlying_decl = cursor.underlying_typedef_type.get_declaration()
@@ -207,6 +336,11 @@ def _load_manifest(product_id: str, root: Path, controller_name: str = None):
     is given (one manifest per controller, e.g. "controller1", "controller2"
     for products with more than one), or products/<id>/<id>.py otherwise
     (single-controller / not-yet-migrated products).
+
+    STRUCT_HEADERS (required) and INCLUDE_PATHS (optional, defaults to [])
+    are both resolved relative to the manifest file's own directory into
+    absolute paths -- INCLUDE_PATHS entries don't need to share a subpath
+    with the product; they can point anywhere on disk (e.g. `../../shared_sdk`).
     """
     product_dir = (root / "products" / product_id).resolve()
     manifest_stem = controller_name or product_id
@@ -221,12 +355,12 @@ def _load_manifest(product_id: str, root: Path, controller_name: str = None):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     headers = [(product_dir / h).resolve() for h in module.STRUCT_HEADERS]
-    return product_dir, manifest_path, headers
+    include_paths = [(product_dir / p).resolve() for p in getattr(module, "INCLUDE_PATHS", [])]
+    return product_dir, manifest_path, headers, include_paths
 
 
-def _module_dotted(product_id: str, product_dir: Path, header_path: Path) -> str:
-    rel = header_path.relative_to(product_dir).with_suffix("")
-    return ".".join(["products", product_id, "generated_structs", *rel.parts])
+def _module_dotted(product_id: str, header_path: Path) -> str:
+    return f"products.{product_id}.generated_structs.{header_path.stem}"
 
 
 def _topo_sort_headers(headers: list, cross_refs: dict) -> list:
@@ -247,21 +381,6 @@ def _topo_sort_headers(headers: list, cross_refs: dict) -> list:
     return order
 
 
-def _ensure_package_dirs(output_dir: Path, rel_py_path: Path) -> None:
-    for part in (output_dir, *[output_dir / p for p in _accumulate(rel_py_path.parent.parts)]):
-        part.mkdir(parents=True, exist_ok=True)
-        init = part / "__init__.py"
-        if not init.exists():
-            init.write_text("# auto-generated package marker\n", encoding="utf-8")
-
-
-def _accumulate(parts):
-    acc = Path()
-    for p in parts:
-        acc = acc / p
-        yield acc
-
-
 def generate_for_product(product_id: str, controller_name: str = None,
                           root: Path = ROOT, force: bool = False) -> None:
     """
@@ -274,26 +393,27 @@ def generate_for_product(product_id: str, controller_name: str = None,
     existing generated output as-is.
     """
     try:
-        product_dir, manifest_path, headers = _load_manifest(product_id, root, controller_name)
+        product_dir, manifest_path, headers, include_paths = _load_manifest(product_id, root, controller_name)
     except FileNotFoundError:
         return
 
     output_dir = product_dir / "generated_structs"
     marker = output_dir / f".generated_marker.{controller_name or product_id}"
 
-    search_dirs = {h.parent for h in headers}
+    search_dirs = {h.parent for h in headers} | set(include_paths)
     watched = [manifest_path, *headers]
     for d in search_dirs:
-        watched.extend(d.glob("*.h"))
+        if d.exists():
+            watched.extend(d.glob("*.h"))
     latest_source = max((f.stat().st_mtime for f in watched if f.exists()), default=0)
 
     if not force and marker.exists() and marker.stat().st_mtime >= latest_source:
         return  # up to date
 
     try:
-        _generate_for_product(product_id, product_dir, headers, output_dir)
+        _generate_for_product(product_id, product_dir, headers, include_paths, output_dir)
     except ImportError:
-        if output_dir.exists() and any(output_dir.rglob("*.py")):
+        if output_dir.exists() and any(output_dir.glob("*.py")):
             print(f"[WARN] struct_gen: headers changed for product '{product_id}' but libclang "
                   f"isn't installed -- keeping existing generated_structs/ as-is. "
                   f"Run `pip install -r requirements-dev.txt` to regenerate.")
@@ -304,14 +424,32 @@ def generate_for_product(product_id: str, controller_name: str = None,
         marker.write_text("", encoding="utf-8")
 
 
-def _generate_for_product(product_id: str, product_dir: Path, headers: list, output_dir: Path) -> None:
+def _generate_for_product(product_id: str, product_dir: Path, headers: list,
+                           include_paths: list, output_dir: Path) -> None:
+    stems = {}
+    for h in headers:
+        stems.setdefault(h.stem, []).append(h)
+    collisions = {stem: hs for stem, hs in stems.items() if len(hs) > 1}
+    if collisions:
+        detail = "; ".join(f"{stem}: {[str(h) for h in hs]}" for stem, hs in collisions.items())
+        raise ValueError(
+            f"struct_gen: STRUCT_HEADERS has headers with the same filename stem -- "
+            f"output is flat (one .py per stem) under generated_structs/, so stems "
+            f"must be unique: {detail}"
+        )
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    init_path = output_dir / "__init__.py"
+    if not init_path.exists():
+        init_path.write_text("# auto-generated package marker\n", encoding="utf-8")
+
     headers_set = set(headers)
     per_header = {}  # header_path -> list[(name, decl)] defined directly in that header
     cross_refs = {}  # header_path -> set(header_paths whose types it references)
     ci_mod = None
 
     for header in headers:
-        tu, ci = _parse_header(header)
+        tu, ci = _parse_header(header, include_paths)
         ci_mod = ci
 
         records = list(_top_level_records(tu, ci))
@@ -336,9 +474,7 @@ def _generate_for_product(product_id: str, product_dir: Path, headers: list, out
     order = _topo_sort_headers(headers, cross_refs)
 
     for header in order:
-        rel_py = header.relative_to(product_dir).with_suffix(".py")
-        out_path = output_dir / rel_py
-        _ensure_package_dirs(output_dir, rel_py)
+        out_path = output_dir / f"{header.stem}.py"
 
         lines = [
             "# AUTO-GENERATED — DO NOT EDIT MANUALLY",
@@ -362,13 +498,14 @@ def _generate_for_product(product_id: str, product_dir: Path, headers: list, out
                         needed_imports.setdefault(ref_header, set()).add(ref_name)
 
         for ref_header in sorted(needed_imports, key=lambda h: str(h)):
-            dotted = _module_dotted(product_id, product_dir, ref_header)
+            dotted = _module_dotted(product_id, ref_header)
             names = ", ".join(sorted(needed_imports[ref_header]))
             lines.append(f"from {dotted} import {names}")
         lines.append("")
 
+        used_names = set()
         for name, decl in per_header[header]:
-            _emit_record(decl, name, lines, ci_mod)
+            _emit_record(decl, name, lines, ci_mod, used_names)
 
         out_path.write_text("\n".join(lines), encoding="utf-8")
         print(f"[struct_gen] Wrote {out_path.relative_to(product_dir.parent.parent)} "

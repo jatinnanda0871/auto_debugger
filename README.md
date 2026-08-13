@@ -11,7 +11,6 @@ sizes, and struct layouts — this tool only reads and interprets.
 ```
 auto_debugger/
 ├── main.py                      ← entry point
-├── analyzers.py                 ← standalone analyzer functions
 ├── engine/
 │   ├── models.py                ← Region, Chunk, MemoryView (sparse bytearray)
 │   ├── api.py                   ← DumpAnalyzer public API
@@ -27,6 +26,8 @@ auto_debugger/
 │   │   ├── generated_structs/   ← struct_gen.py output (git-ignored, regenerated)
 │   │   └── modules/
 │   │       └── <module>.py      ← per-IP analyzer: run(analyzer)
+│   ├── epdc/
+│   │   └── sample_dump/          ← one folder per test scenario, used by tests/
 │   └── test_suite/               ← product that smoke-tests the DumpAnalyzer API
 │       ├── gen_fixtures.py       ← regenerates sample_dumps/ deterministically
 │       └── sample_dumps/         ← one folder per test scenario
@@ -209,16 +210,25 @@ All map key strings must be declared as constants in `config.py` — never hardc
 
 ## Struct Generation
 
-`engine/struct_gen.py` converts a product's C/C++ firmware struct headers
+`engine/struct_gen.py` converts a product's C++ firmware struct headers
 into ctypes-based Python structs using libclang 14. Generation is per-product:
 
 ```
 products/<id>/
     <id>.py             ← fallback manifest: STRUCT_HEADERS = ["structs/a.h", ...]
+                           optionally also INCLUDE_PATHS = ["external/sdk", ...]
     <controller>.py     ← per-controller manifest (e.g. controller1.py, controller2.py)
     structs/            ← *.h headers — the source of truth, edit these
     generated_structs/  ← struct_gen.py output — git-ignored, do not edit
 ```
+
+Both `STRUCT_HEADERS` and `INCLUDE_PATHS` are resolved relative to the
+manifest file's own directory into absolute paths. `INCLUDE_PATHS` entries
+don't need to live under the product directory or share any subpath with
+it — they're passed to libclang as `-I` search paths so `#include`s that
+reach outside `STRUCT_HEADERS` (e.g. a shared SDK header) resolve; headers
+found only via `INCLUDE_PATHS` aren't themselves turned into generated
+structs unless also listed in `STRUCT_HEADERS`.
 
 Reached through the public API, not called directly:
 ```python
@@ -241,8 +251,17 @@ python -m engine.struct_gen <product_id> [controller_name] --force     # regener
 ```
 
 Key properties:
-- **Output mirrors input 1:1** — `structs/a.h` → `generated_structs/structs/a.py`.
-  Class and field names are copied verbatim from the C names; no mangling.
+- **Output is flat, not mirrored** — every header in `STRUCT_HEADERS`
+  produces one file directly under `generated_structs/`, named after the
+  header's own stem regardless of where it lives on disk:
+  `structs/a.h` → `generated_structs/a.py`. Two headers sharing a stem is a
+  configuration error struct_gen raises on, rather than letting one
+  silently overwrite the other. Class and field names are copied verbatim
+  from the C++ names; no mangling, except where struct_gen has to invent a
+  name for a nested anonymous struct/union (see below).
+- **Headers are parsed as C++**, including `extern "C" { ... }` linkage
+  blocks — structs/unions declared inside one are picked up exactly as if
+  they weren't wrapped.
 - **Each header is parsed independently** (never combined into one
   translation unit), so identical struct/union names in unrelated headers
   never collide. If header B needs a type from header A, `#include "a.h"`
@@ -252,6 +271,18 @@ Key properties:
 - **Header dependencies are topologically sorted** before generation, from
   the cross-file references above — you don't need to list headers in any
   particular order in `STRUCT_HEADERS`.
+- **Nested anonymous structs/unions are handled, including nested inside
+  each other.** A named field of an otherwise-tagless struct/union type
+  (`struct {...} grp1;`) keeps its field name as the generated class name
+  (`grp1`) and is accessed as `obj.grp1.x` — never promoted. A truly
+  anonymous member (`union {...};`, no trailing name) is emitted as a
+  promoted member via ctypes' `_anonymous_`, matching C++ semantics
+  (`obj.x` works directly); if it's a union whose fields include one named
+  with the project's `rst...` prefix (`struct {...} rstmystruct1;`),
+  struct_gen names the union by stripping that prefix and prepending
+  `union` (`unionmystruct1`) — otherwise it falls back to a generated name.
+  Name collisions within one file fall back to a `_<ParentClass>_<field>`
+  form automatically.
 - **Type mapping is by canonical type kind, not spelling** — register-access
   macros (`#define REG_UINT8 volatile uint8_t`) and `const`/`volatile`
   qualifiers resolve to the same ctypes mapping as the plain type would.
@@ -266,7 +297,7 @@ Key properties:
 
 Once generated, cast any address to a struct with `from_address`:
 ```python
-from products.epdc.generated_structs.structs.big_struct import BigStruct64
+from products.epdc.generated_structs.big_struct import BigStruct64
 s = BigStruct64.from_address(addr)   # live, zero-copy view onto that memory
 ```
 
