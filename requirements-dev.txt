@@ -1,5 +1,5 @@
 # Development / test dependencies only. The project itself has no runtime
-# dependencies beyond the Python 3.11+ standard library.
+# dependencies beyond the Python 3.8+ standard library.
 pytest>=8.0
 pytest-cov>=5.0
 

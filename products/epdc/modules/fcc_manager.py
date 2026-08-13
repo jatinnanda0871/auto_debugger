@@ -1,14 +1,12 @@
 from engine.api import DumpAnalyzer
 from products.epdc.config import *
+from products.epdc.generated_structs.big_struct import dword7_checksum_t
 
 
 # ── Analyzers ──────────────────────────────────────────────────────────────────
 
 def analyze_fcc_counter(analyzer: DumpAnalyzer) -> None:
     print("\n=== FCC Counter Analysis ===")
-    fcc_counter_size = FCC_COUNTER_SIZE
-    fcc_mask         = (1 << fcc_counter_size) - 1
-    print(f"  fcc_count_field_size : {fcc_counter_size} bits  (mask=0x{fcc_mask:08X})")
 
     func_count = analyzer.get_region_size_dwords(FCC_COUNTERS_ADDR)
     print(f"  Total Functions      : {func_count}  (derived from region size)")
@@ -16,13 +14,14 @@ def analyze_fcc_counter(analyzer: DumpAnalyzer) -> None:
     print(f"\n  {'Function':<12} {'Raw Dword':<12} {'FCC Counter':<12}")
     print(f"  {'-'*36}")
 
-    total_fcc = analyzer.sum_bitfield_across_region(
-        FCC_COUNTERS_ADDR, bit_offset=0, bit_width=fcc_counter_size
-    )
-
-    for i, dw in analyzer.iter_dwords(FCC_COUNTERS_ADDR):
-        fcc_val = dw & fcc_mask
-        print(f"  Func[{i:<2}]     0x{dw:08X}      {fcc_val}")
+    total_fcc = 0
+    for i in range(func_count):
+        # Each per-function dword is typecast to dword7_checksum_t -- the
+        # count itself lives in its mixed.crc byte.
+        record  = analyzer.get_struct(FCC_COUNTERS_ADDR, dword7_checksum_t, byte_offset=i * 4)
+        fcc_val = record.mixed.crc
+        total_fcc += fcc_val
+        print(f"  Func[{i:<2}]     0x{record.raw:08X}      {fcc_val}")
 
     pending_count = analyzer.count_set_tags(PENDING_TAG_ADDR)
 

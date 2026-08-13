@@ -32,5 +32,4 @@ PENDING_KEYS = [
 
 # ── FccManager keys ────────────────────────────────────────────────────────────
 
-FCC_COUNTERS_ADDR     = "FccManager::counters"
-FCC_COUNTER_SIZE = 8
+FCC_COUNTERS_ADDR = "FccManager::counters"

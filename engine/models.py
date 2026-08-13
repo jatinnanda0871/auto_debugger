@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -64,6 +66,15 @@ class MemoryView:
             return None
         b = c.data[offset:offset + 4]
         return b[0] | (b[1] << 8) | (b[2] << 16) | (b[3] << 24)
+
+    def read_bytes(self, addr: int, n: int) -> Optional[bytes]:
+        c = self._find_chunk(addr)
+        if c is None:
+            return None
+        offset = addr - c.base_addr
+        if offset + n > len(c.data):
+            return None
+        return bytes(c.data[offset:offset + n])
 
     def read_region_dwords(self, region: Region) -> list:
         return [self.read_dword(region.base_addr + i * 4)

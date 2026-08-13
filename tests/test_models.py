@@ -58,6 +58,24 @@ def test_read_outside_any_chunk_returns_none():
     assert mv.read_dword(0x2000) is None
 
 
+def test_read_bytes_reads_exact_range_within_chunk():
+    data = bytearray([0x01, 0x02, 0x03, 0x04, 0x05])
+    mv   = MemoryView(chunks=[Chunk(base_addr=0x1000, data=data)])
+    assert mv.read_bytes(0x1001, 3) == bytes([0x02, 0x03, 0x04])
+
+
+def test_read_bytes_returns_none_outside_any_chunk():
+    mv = MemoryView(chunks=[Chunk(base_addr=0x1000, data=bytearray(8))])
+    assert mv.read_bytes(0x2000, 4) is None
+
+
+def test_read_bytes_returns_none_on_partial_overrun_at_chunk_end():
+    data = bytearray(7)
+    mv   = MemoryView(chunks=[Chunk(base_addr=0x1000, data=data)])
+    assert mv.read_bytes(0x1004, 4) is None  # would need [4:8], only [4:7] exist
+    assert mv.read_bytes(0x1004, 3) == bytes(3)
+
+
 def test_read_dword_partial_overrun_at_chunk_end_returns_none():
     # Chunk holds only 3 bytes past addr 0x1004 -- not enough for a full dword
     data = bytearray(7)

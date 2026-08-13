@@ -319,7 +319,7 @@ releases/v1.x.x/
 The project has a `pytest` suite under `tests/`, covering `engine/` (models,
 loader, `DumpAnalyzer`), the `epdc` product, and the `test_suite` product
 itself. It runs locally and in GitHub Actions (`.github/workflows/tests.yml`)
-on every push/PR to `main`, against Python 3.11–3.13.
+on every push/PR to `main`, against Python 3.8 and 3.11–3.13.
 
 ### Running locally
 ```bash
