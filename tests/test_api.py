@@ -1,3 +1,4 @@
+import ctypes
 import pytest
 
 from engine.api import DumpAnalyzer
@@ -165,6 +166,47 @@ def test_get_bitfield_extracts_middle_bits(basic_analyzer):
 
 def test_get_bitfield_at_offset(basic_analyzer):
     assert basic_analyzer.get_bitfield_at_offset("A::tags", byte_offset=8, bit_offset=0, bit_width=8) == 0xFF
+
+
+# ── struct typecast ──────────────────────────────────────────────────────────
+
+class _Point(ctypes.LittleEndianStructure):
+    _pack_ = 1
+    _fields_ = [("x", ctypes.c_uint16), ("y", ctypes.c_uint16)]
+
+
+def test_get_struct_returns_populated_instance(basic_analyzer):
+    # First 4 bytes of A::tags are 0x00000007 little-endian -> x=0x0007, y=0x0000
+    inst = basic_analyzer.get_struct("A::tags", _Point)
+    assert isinstance(inst, _Point)
+    assert inst.x == 7
+    assert inst.y == 0
+
+
+def test_get_struct_honors_byte_offset(basic_analyzer):
+    # dword2 = 0xFFFFFFFF at offset 8 -> x=0xFFFF, y=0xFFFF
+    inst = basic_analyzer.get_struct("A::tags", _Point, byte_offset=8)
+    assert inst.x == 0xFFFF
+    assert inst.y == 0xFFFF
+
+
+def test_get_struct_raises_on_out_of_bounds():
+    regions = {"S::small": Region(name="S::small", base_addr=0x1000, size_bytes=2)}
+    a = make_analyzer(regions, [Chunk(base_addr=0x1000, data=bytearray(2))])
+    with pytest.raises(ValueError, match="Out-of-bounds"):
+        a.get_struct("S::small", _Point)  # needs 4 bytes, region only has 2
+
+
+def test_get_struct_raises_when_bytes_not_in_dump():
+    regions = {"M::missing": Region(name="M::missing", base_addr=0x2000, size_bytes=4)}
+    a = make_analyzer(regions, [])  # no chunks -- nothing backed
+    with pytest.raises(ValueError, match="not fully in dump"):
+        a.get_struct("M::missing", _Point)
+
+
+def test_get_struct_rejects_non_ctypes_class(basic_analyzer):
+    with pytest.raises(TypeError, match="ctypes.Structure or ctypes.Union"):
+        basic_analyzer.get_struct("A::tags", dict)
 
 
 # ── array iteration ────────────────────────────────────────────────────────

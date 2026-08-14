@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import ctypes
 import sys
 from typing import Optional
@@ -49,6 +51,27 @@ class DumpAnalyzer:
         nothing changed since the last generation (unless force=True).
         """
         generate_for_product(product_id, controller_name, force=force)
+
+    def get_struct(self, key: str, struct_cls: type, byte_offset: int = 0):
+        """
+        Reads sizeof(struct_cls) bytes from key's region (starting at
+        byte_offset within it) and returns them typecast into struct_cls --
+        a ctypes.Structure/Union subclass, typically one emitted into
+        products/<id>/generated_structs/ by struct_gen.py.
+        """
+        if not (isinstance(struct_cls, type) and issubclass(struct_cls, (ctypes.Structure, ctypes.Union))):
+            raise TypeError(
+                f"get_struct: struct_cls must be a ctypes.Structure or ctypes.Union "
+                f"subclass, got {struct_cls!r}"
+            )
+        region = self._get_region(key)
+        size   = ctypes.sizeof(struct_cls)
+        self._check_bounds(region, byte_offset, size)
+        addr   = region.base_addr + byte_offset
+        data   = self._mem.read_bytes(addr, size)
+        if data is None:
+            raise ValueError(f"'{key}'+0x{byte_offset:X} ({size} bytes) not fully in dump")
+        return struct_cls.from_buffer_copy(data)
 
     # ── Internal helpers ───────────────────────────────────────────────────────
 

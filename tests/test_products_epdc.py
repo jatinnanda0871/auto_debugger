@@ -53,6 +53,44 @@ def test_epdc_fcc_manager_analyze_fcc_counter_directly():
     fcc_manager.analyze_fcc_counter(analyzer)  # smoke: must not raise
 
 
+def test_epdc_fcc_manager_derives_counter_value_via_get_struct():
+    """
+    Each per-function FCC counter is no longer read via raw-dword bit
+    masking -- analyze_fcc_counter now typecasts each function's dword to
+    dword7_checksum_t via analyzer.get_struct() and reads the count from
+    its mixed.crc field. Proven here by independently typecasting the same
+    region ourselves and checking it matches what get_dword sees (crc is
+    dword7_checksum_t's first byte, i.e. bits [0:8) of the raw dword).
+    """
+    from engine.loader import find_map_file, load_dump, load_map
+    from engine.api import DumpAnalyzer
+    from products.epdc.config import FCC_COUNTERS_ADDR
+    from products.epdc.generated_structs.big_struct import dword7_checksum_t
+
+    folder   = EPDC_DIR / "sample_dump" / "1_halted_1"
+    regions  = load_map(find_map_file(str(folder)))
+    mem      = load_dump(str(folder))
+    analyzer = DumpAnalyzer(mem, regions)
+
+    func_count = analyzer.get_region_size_dwords(FCC_COUNTERS_ADDR)
+    for i in range(func_count):
+        record = analyzer.get_struct(FCC_COUNTERS_ADDR, dword7_checksum_t, byte_offset=i * 4)
+        dw     = analyzer.get_dword(FCC_COUNTERS_ADDR) if i == 0 else None
+        assert record.mixed.crc == record.raw & 0xFF
+        if dw is not None:
+            assert record.raw == dw
+
+
+def test_epdc_fcc_manager_prints_struct_derived_counters(capsys):
+    from products.epdc.modules import fcc_manager
+    analyzer = build_analyzer(EPDC_DIR / "sample_dump" / "1_halted_1")
+    fcc_manager.analyze_fcc_counter(analyzer)
+    out = capsys.readouterr().out
+    # dwords for 1_halted_1 are 1, 1, 1, 0 (see memory.dump) -- crc == low byte
+    assert "Func[0 ]     0x00000001      1" in out
+    assert "Func[3 ]     0x00000000      0" in out
+
+
 @pytest.mark.parametrize("scenario", [
     "1_halted_1", "2_fcc_tags_mismatch", "3_halted_2",
     "4_fcc_count_error", "5_idle_state", "6_halted_3",
